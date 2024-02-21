@@ -1,0 +1,10 @@
+# Binary cache file
+__pycache__/
+*.py[cod]
+
+# Distribution
+*.egg-info/
+*.so3*
+*test.py
+test*.py
+
