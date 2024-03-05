@@ -2,7 +2,7 @@ import torch
 import logging
 from torch import nn
 from dtmol.utils.data import Dictionary
-from dtmol.block import GaussianLayer, TransformerEncoderWithPair, MaskLMHead, NonLinearHead, DistanceHead
+from dtmol.block import GaussianLayer, TransformerEncoderWithPair, MaskLMHead, NonLinearHead, DistanceHead, ClassificationHead
 logger = logging.getLogger(__name__)
 
 
@@ -31,7 +31,7 @@ class UniMolEncoder(nn.Module):
         super().__init__()
         base_architecture(args)
         self.args = args
-        self.padding_idx = dictionary.pad()
+        self.padding_idx = dictionary.pad
         self.embed_tokens = nn.Embedding(
             len(dictionary), args.encoder_embed_dim, self.padding_idx
         )
@@ -48,6 +48,7 @@ class UniMolEncoder(nn.Module):
             max_seq_len=args.max_seq_len,
             activation_fn=args.activation_fn,
             no_final_head_layer_norm=args.delta_pair_repr_norm_loss < 0,
+            post_ln=args.post_ln,
         )
         if args.masked_token_loss > 0:
             self.lm_head = MaskLMHead(
@@ -103,7 +104,7 @@ class UniMolEncoder(nn.Module):
             gbf_feature = self.gbf(dist, et)
             gbf_result = self.gbf_proj(gbf_feature)
             graph_attn_bias = gbf_result
-            graph_attn_bias = graph_attn_bias.permute(0, 3, 1, 2).contiguous()
+            graph_attn_bias = graph_attn_bias.permute(0, 3, 1, 2).contiguous() # [bsz, head, n_node, n_node]
             graph_attn_bias = graph_attn_bias.view(-1, n_node, n_node) # [bsz*head, n_node, n_node]
             return graph_attn_bias
 
@@ -143,6 +144,8 @@ class UniMolEncoder(nn.Module):
             logits = self.classification_heads[classification_head_name](encoder_rep)
         if self.args.mode == 'infer':
             return encoder_rep, encoder_pair_rep
+        elif self.args.mode == 'encode':
+            return encoder_rep, encoder_pair_rep, padding_mask
         else:
             return (
                 logits,
@@ -153,7 +156,7 @@ class UniMolEncoder(nn.Module):
             )         
 
     def register_classification_head(
-        self, name, num_classes=None, inner_dim=None, **kwargs
+        self, name, num_classes=None, inner_dim=None
     ):
         """Register a classification head."""
         if name in self.classification_heads:
@@ -186,22 +189,21 @@ if __name__ == "__main__":
         def __init__(self):
             self.mode = "infer"
     test_args = TestArgs()
-    from matplotlib import pyplot as plt
     #%% Load molecular model
-    dict = Dictionary.load("/home/haotiant/diffMol/models/pretrain/unimol_molecule_dict.txt")
+    dict = Dictionary.load("/home/haotiant/dtmol/models/pretrain/unimol_molecule_dict.txt")
     mask_idx = dict.add_symbol("[MASK]", is_special=True) #Add mask token according to line 83 in tasks/unimol_conf_gen.py
     molecular_model = UniMolEncoder(args = test_args, dictionary=dict)
-    model_dict = torch.load("/home/haotiant/diffMol/models/pretrain/unimol_molecule_pretrain.pt")
+    model_dict = torch.load("/home/haotiant/dtmol/models/pretrain/unimol_molecule_pretrain.pt")
     molecular_model.load_state_dict(model_dict["model"],strict=False)
 
     #%% Load protein pocket model
-    protein_dict = Dictionary.load("/home/haotiant/diffMol/models/pretrain/unimol_protein_dict.txt")
+    protein_dict = Dictionary.load("/home/haotiant/dtmol/models/pretrain/unimol_protein_dict.txt")
     mask_idx = protein_dict.add_symbol("[MASK]", is_special=True) #Add mask token according to line 83 in tasks/unimol_conf_gen.py
     protein_model = UniMolEncoder(args = test_args, dictionary=protein_dict)
-    model_dict = torch.load("/home/haotiant/diffMol/models/pretrain/unimol_protein_pretrain.pt")
+    model_dict = torch.load("/home/haotiant/dtmol/models/pretrain/unimol_protein_pretrain.pt")
     protein_model.load_state_dict(model_dict["model"],strict=False)
 
-    from dtmol.utils.unimol_data import MoleculeDataset, ProteinDataset
+    from dtmol.utils.datasets import MoleculeDataset, ProteinDataset
     #%% Load molecule data
     lmdb_path = "/data/unimol_data/conformation_generation/drugs/"
     test_config = {
@@ -235,7 +237,7 @@ if __name__ == "__main__":
         "smooth": 0.1,
         "topN": 10,
         "max_seq_len": 500,
-        "dict_type": "coarse", #coarse or fine atom type used in the dictionary file
+        "dict_type": "dict_coarse.txt", #coarse or fine atom type used in the dictionary file
         "max_atoms": 256, #maximum number of atoms in a pocket
         "noise_type": "normal", #noise type in coordinate noise, can be "trunc_normal", "uniform", "normal", "none"
         "noise": 1.,#coordinate noise for masked atoms
@@ -243,9 +245,10 @@ if __name__ == "__main__":
         "leave_unmasked_prob":0.1, #probability that a masked token is unmasked
         "random_token_prob":0.05, #probability of replacing a mask token with a random token
     }
-    split = "valid"
+    split = "train"
     pocket_dataset = ProteinDataset(protein_dict,test_config)
-    pocket_dataset.load_lmdb(protein_path,split)
+    pocket_dataset.load_lmdb(protein_path,'train')
+    pocket_dataset.load_lmdb(protein_path,'valid')
 
     #%% Test protein model
     print(f"Total number of pockets: {len(pocket_dataset.datasets[split])}")

@@ -48,22 +48,22 @@ def _compose(r1, r2):  # R1 @ R2 but for Euler vecs
     return Rotation.from_matrix(Rotation.from_rotvec(r1).as_matrix() @ Rotation.from_rotvec(r2).as_matrix()).as_rotvec()
 
 
-def _expansion(omega, eps, L=2000):  # the summation term only
+def _expansion(omega, eps, L=2000):  # the summation term only (f(w) term in equation 3 in diffDock paper)
     p = 0
     for l in range(L):
         p += (2 * l + 1) * np.exp(-l * (l + 1) * eps**2) * np.sin(omega * (l + 1 / 2)) / np.sin(omega / 2)
     return p
 
 
-def _density(expansion, omega, marginal=True):  # if marginal, density over [0, pi], else over SO(3)
+def _density(expansion, omega, marginal=True):  
+    # if marginal, density over [0, pi], else over SO(3) the p(w) term in equation 3 in diffDock paper
     if marginal:
         return expansion * (1 - np.cos(omega)) / np.pi
     else:
         return expansion / 8 / np.pi ** 2  # the constant factor doesn't affect any actual calculations though
 
 
-def _score(exp, omega, eps, L=2000):  # score of density over SO(3)
-    dSigma = 0
+def _score(exp, omega, eps, L=2000):  # score of density over SO(3), the dlog(f(w))/dw term
     for l in range(L):
         hi = np.sin(omega * (l + 1 / 2))
         dhi = (l + 1 / 2) * np.cos(omega * (l + 1 / 2))
@@ -116,13 +116,13 @@ def score_norm(eps):
 
 if __name__ == "__main__":
     """ Test the SO(3) sampling and score computations """
-    omega = sample(2)
-    axis = sample_vec(2)
-    print(score_vec(2, axis))
-    rot_matrix = Rotation.from_rotvec(axis).as_matrix()
-    print(rot_matrix)
-    orig_vec = np.array([1, 0, 0])
-    rot_vec = rot_matrix @ orig_vec
+    # omega = sample(2)
+    # axis = sample_vec(2)
+    # print(score_vec(2, axis))
+    # rot_matrix = Rotation.from_rotvec(axis).as_matrix()
+    # print(rot_matrix)
+    # orig_vec = np.array([1, 0, 0])
+    # rot_vec = rot_matrix @ orig_vec
 
     # # plot the original and rotated vector
     # import matplotlib.pyplot as plt
@@ -132,3 +132,21 @@ if __name__ == "__main__":
     # ax.quiver(0, 0, 0, rot_vec[0], rot_vec[1], rot_vec[2], color='b')
     # #plot the eular vector
     # ax.quiver(0, 0, 0, axis[0], axis[1], axis[2], color='g')
+
+    # 3D plot the sampled unit vector
+    from matplotlib import pyplot as plt
+    from angle_plot import plot_angle_distribution_polar
+    sampled = []
+    for _ in range(10000):
+        axis = sample_vec(2)
+        axis = axis / np.linalg.norm(axis)
+        sampled.append(axis)
+    # 3d plot the end points of the sampled unit vector
+    sampled = np.array(sampled)
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection='3d')
+    ax.scatter(sampled[:, 0], sampled[:, 1], sampled[:, 2])
+    plot_angle_distribution_polar(sampled, np.array([0, 0, 1]))
+    plt.show()
+
+    #plot the distribution of 

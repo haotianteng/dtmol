@@ -588,7 +588,7 @@ if __name__ == "__main__":
         if not torch.equal(param1,param2):
             print(f"Parameter mismatch: {name1} and {name2}")
 
-    from dtmol.utils.unimol_data import MoleculeDataset, ProteinDataset
+    from dtmol.utils.datasets import MoleculeDataset, ProteinDataset,CrossDataset
     #%% Load molecule data
     lmdb_path = "/data/unimol_data/conformation_generation/drugs/"
     test_config = {

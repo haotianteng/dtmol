@@ -46,6 +46,39 @@ class GaussianLayer(nn.Module):
         std = self.stds.weight.float().view(-1).abs() + 1e-5 # [K]
         return gaussian(x.float(), mean, std).type_as(self.means.weight)
 
+class GaussianAttentionLayer(nn.Module):
+    """This will calculate the gaussian kernal for the given coordinates.
+    o_ijk = Gaussian(d_ij * mu(e_ij) + b(e_ij), mean_k, std_k) where e_ij is the edge type
+    for distance d_ij between atom i and j.
+    """
+    def __init__(self, K=128, edge_types=1024):
+        super().__init__()
+        self.K = K
+        self.means = nn.Embedding(1, K)
+        self.stds = nn.Embedding(1, K)
+        self.mul = nn.Embedding(edge_types, K)
+        self.scale = nn.Embedding(edge_types, K)
+        nn.init.uniform_(self.means.weight, 0, 3)
+        nn.init.uniform_(self.stds.weight, 0, 3)
+        nn.init.constant_(self.scale.weight, 1)
+        nn.init.constant_(self.mul.weight, 1)
+
+    def forward(self, x, edge_type):
+        """
+        X here is the distance matrix batches with shape [B,N,N], where B
+            is the batch size, N is the number of atoms in the molecule. 
+        edge_type is a integer tensor the edge type between any two atoms and have shape [B,N,N].
+        Output:
+        The output is a tensor with shape [B,N,N,K]. Where K is the number of gaussian basis
+            used.
+        """
+        mul = self.mul(edge_type).type_as(x) # [B,N,N,K]
+        scale = self.scale(edge_type).type_as(x) # [B,N,N,K]
+        x = x.unsqueeze(-1).expand(-1, -1, -1, self.K) # [B,N,N,K]
+        mean = self.means.weight.float().view(-1) # [K]
+        std = self.stds.weight.float().view(-1).abs() + 1e-5 # [K]
+        return scale * gaussian(mul*x.float(), mean, std).type_as(self.means.weight)
+
 class TransformerEncoderWithPair(nn.Module):
     def __init__(
         self,
@@ -158,7 +191,7 @@ class TransformerEncoderWithPair(nn.Module):
         delta_pair_repr, _ = fill_attn_mask(delta_pair_repr, input_padding_mask, 0)
         attn_mask = (
             attn_mask.view(bsz, -1, seq_len, seq_len).permute(0, 2, 3, 1).contiguous()
-        )
+        ) # [bsz, seq_len, seq_len, head]
         delta_pair_repr = (
             delta_pair_repr.view(bsz, -1, seq_len, seq_len)
             .permute(0, 2, 3, 1)
@@ -297,14 +330,14 @@ class ClassificationHead(nn.Module):
     def __init__(
         self,
         input_dim,
-        inner_didtmolm,
+        inner_dim,
         num_classes,
         activation_fn,
         pooler_dropout,
     ):
         super().__init__()
         self.dense = nn.Linear(input_dim, inner_dim)
-        self.activation_fn = utils.get_activation_fn(activation_fn)
+        self.activation_fn = get_activation_fn(activation_fn)
         self.dropout = nn.Dropout(p=pooler_dropout)
         self.out_proj = nn.Linear(inner_dim, num_classes)
 
@@ -315,6 +348,30 @@ class ClassificationHead(nn.Module):
         x = self.activation_fn(x)
         x = self.dropout(x)
         x = self.out_proj(x)
+        return x
+
+class DiffusionHead(nn.Module):
+    """Head for simple classification tasks."""
+
+    def __init__(
+        self,
+        input_dim,
+        out_dim,
+        activation_fn,
+        hidden_dim=None,
+    ):
+        super().__init__()
+        hidden_dim = input_dim if not hidden_dim else hidden_dim
+        self.linear1 = nn.Linear(input_dim, hidden_dim)
+        self.linear2 = nn.Linear(hidden_dim, out_dim)
+        self.activation_fn = get_activation_fn(activation_fn)
+        self.layer_norm = LayerNorm(hidden_dim)
+
+    def forward(self, x):
+        x = self.linear1(x)
+        x = self.activation_fn(x)
+        x = self.layer_norm(x)
+        x = self.linear2(x)
         return x
 
 
