@@ -1,12 +1,12 @@
 from typing import Dict
 from torch import nn
 import torch
-from dtmol.block import TransformerEncoderWithPair, DiffusionHead, NonLinearHead, GaussianAttentionLayer
+from dtmol.block import TransformerDecoderWithPair, DiffusionHead,DiffusionPoolHead, NonLinearHead, GaussianAttentionLayer
 import logging
 logger = logging.getLogger(__name__)
 
 def base_architecture(args):
-    args.num_layers = getattr(args, "layers", 15)
+    args.num_layers = getattr(args, "layers", 14)
     args.embed_dim = getattr(args, "embed_dim", 512)
     args.ffn_embed_dim = getattr(args, "ffn_embed_dim", 2048)
     args.attention_heads = getattr(args, "attention_heads", 64)
@@ -14,8 +14,8 @@ def base_architecture(args):
     args.dropout = getattr(args, "dropout", 0.1)
     args.n_gaussian_basis = getattr(args, "n_gaussian_basis", 128)
     args.attention_dropout = getattr(args, "attention_dropout", 0.1)
-    args.activation_dropout = getattr(args, "activation_dropout", 0.0)
-    args.head_dropout = getattr(args, "head_dropout", 0.0)
+    args.activation_dropout = getattr(args, "activation_dropout", 0.1)
+    args.head_dropout = getattr(args, "head_dropout", 0.1)
     args.max_seq_len = getattr(args, "max_seq_len", 512)
     args.activation_fn = getattr(args, "activation_fn", "gelu")
     args.head_activate_fn = getattr(args, "head_activate_fn", "gelu")
@@ -31,7 +31,7 @@ class Decoder(nn.Module):
         n_edge_type = len(dictionary) * len(dictionary)
         super().__init__()
         self.padding_idx = dictionary.pad
-        self.decoder = TransformerEncoderWithPair(
+        self.decoder = TransformerDecoderWithPair(
             encoder_layers=config.num_layers,
             embed_dim=config.embed_dim,
             ffn_embed_dim=config.ffn_embed_dim,
@@ -45,16 +45,18 @@ class Decoder(nn.Module):
             post_ln=config.post_ln,
         )
         self.gbf_proj = NonLinearHead(
-            input_dim = config.n_gaussian_basis,
-            out_dim = config.attention_heads, 
+            input_dim=config.n_gaussian_basis,
+            out_dim=config.attention_heads,
             activation_fn=config.activation_fn
         )
         self.gbf = GaussianAttentionLayer(config.n_gaussian_basis, n_edge_type)
         self.diffusion_heads = nn.ModuleDict()
+        self.mse_loss = nn.MSELoss(reduction="none")
 
     def forward(self, 
                 embd_molecule, 
-                embd_protein, 
+                embd_protein,
+                timesteps,
                 padding_molecule,
                 padding_protein,
                 attn_mole, 
@@ -69,6 +71,7 @@ class Decoder(nn.Module):
         Inpurt Args;
             embd_molecule: (batch, n_molecule, embd_dim) the embedding of the molecule from the molecule encoder
             embd_protein: (batch, n_protein, embd_dim) the embedding of the protein from the protein encoder.
+            time_steps: (batch) the time steps for the diffusion.
             padding_molecule: (batch, n_molecule) the padding mask for the molecule.
             padding_protein: (batch, n_protein) the padding mask for the protein.
             attn_mole: (batch, n_molecule, n_molecule, attention_heads) the attention (pair) matrix from the molecular model.
@@ -108,20 +111,20 @@ class Decoder(nn.Module):
             delta_decoder_pair_rep,
             x_norm,
             delta_decoder_pair_rep_norm,
-        ) = self.decoder(full_embd, padding_mask=full_padding, attn_mask=full_attn)
+        ) = self.decoder(full_embd, timesteps, padding_mask=full_padding, attn_mask=full_attn)
         decoder_pair_rep[decoder_pair_rep == float("-inf")] = 0
         if diffusion_heads is None:
             return decoder_rep, decoder_pair_rep, delta_decoder_pair_rep, x_norm, delta_decoder_pair_rep_norm
         else:
-            scores = []
+            scores = {}
             for head in diffusion_heads:
                 if head not in self.diffusion_heads:
                     raise ValueError(f"Head {head} not registered")
-                scores.append(self.diffusion_heads[head](decoder_rep))
-            return scores
+                scores[head] = self.diffusion_heads[head](decoder_rep)
+            return scores, full_padding
         
     def register_diffusion_head(
-        self, name, out_dim=None, hidden_dim=None
+        self, name, out_dim=None, hidden_dim=None,
     ):
         """Register a classification head."""
         if name in self.diffusion_heads:
@@ -138,16 +141,43 @@ class Decoder(nn.Module):
             input_dim=self.config.embed_dim,
             hidden_dim=hidden_dim or self.config.embed_dim,
             out_dim=out_dim,
-            activation_fn=self.config.head_activate_fn,
+            activation_fn=self.config.head_activate_fn
         )
+
+    def register_diffusion_pool_head(
+        self, name, out_dim=None, hidden_dim=None,pool_dropout = 0.1,
+    ):
+        """Register a classification head."""
+        if name in self.diffusion_heads:
+            prev_out_dim = self.diffusion_heads[name].out_proj.out_features
+            prev_inner_dim = self.diffusion_heads[name].dense.out_features
+            if out_dim != prev_out_dim or hidden_dim != prev_inner_dim:
+                logger.warning(
+                    're-registering head "{}" with output dimesnion {} (prev: {}) '
+                    "and inner_dim {} (prev: {})".format(
+                        name, out_dim, prev_out_dim, hidden_dim, prev_inner_dim
+                    )
+                )
+        self.diffusion_heads[name] = DiffusionPoolHead(
+            input_dim=self.config.embed_dim,
+            hidden_dim=hidden_dim or self.config.embed_dim,
+            out_dim=out_dim,
+            activation_fn=self.config.head_activate_fn,
+            dropout = pool_dropout
+        )
+
+    def diffusion_loss(self, output, scores):
+        """Compute the loss for the diffusion heads."""
+        pass
 
 if __name__ == "__main__":
     from dtmol.encoder import UniMolEncoder
     from dtmol.utils.dictionary import Dictionary
     from dtmol.utils.datasets import CrossDataset
+    base_path = "/home/haotiant/Projects/CMU/dtmol/dtmol/"
     logger.info("Loading the dataset")
-    ligand_dict = Dictionary.load("/home/haotiant/dtmol/models/pretrain/unimol_molecule_dict.txt")
-    protein_dict = Dictionary.load("/home/haotiant/dtmol/models/pretrain/unimol_protein_dict.txt")
+    ligand_dict = Dictionary.load(f"{base_path}/models/pretrain/unimol_molecule_dict.txt")
+    protein_dict = Dictionary.load(f"{base_path}/models/pretrain/unimol_protein_dict.txt")
     ligand_dict.add_symbol("[MASK]", is_special=True)
     protein_dict.add_symbol("[MASK]", is_special=True)
     biding_ds_path = "/data/unimol_data/protein_ligand_binding_pose_prediction/"
@@ -165,31 +195,28 @@ if __name__ == "__main__":
             self.mode = "encode"
     test_encoder_args = TestArgs()
     ligand_encoder = UniMolEncoder(args = test_encoder_args, dictionary=ligand_dict)
-    ligand_model_dict = torch.load("/home/haotiant/dtmol/models/pretrain/unimol_molecule_pretrain.pt")
+    ligand_model_dict = torch.load(f"{base_path}/models/pretrain/unimol_molecule_pretrain.pt")
     ligand_encoder.load_state_dict(ligand_model_dict["model"],strict=False)
     protein_encoder = UniMolEncoder(args = test_encoder_args, dictionary=protein_dict)
-    protein_model_dict = torch.load("/home/haotiant/dtmol/models/pretrain/unimol_protein_pretrain.pt")
+    protein_model_dict = torch.load(f"{base_path}/models/pretrain/unimol_protein_pretrain.pt")
     protein_encoder.load_state_dict(protein_model_dict["model"],strict=False)
 
     logger.info("Loading the decoder")
-    class TestDecoderArgs:
-        def __init__(self):
-            self.mode = "train"
-    test_decoder_args = TestDecoderArgs()
+    test_decoder_args = TestArgs()
     decoder = Decoder(test_decoder_args, ligand_dict)
 
     dataset = pocket_dataset['train']
     def get_mole_input(dataset,i):
-        return {"src_tokens": dataset[i]['net_input.mol_src_tokens'].unsqueeze(0),
-                "src_distance": dataset[i]['net_input.mol_src_distance'].unsqueeze(0),
-                "src_coord": dataset[i]['net_input.mol_src_coord'].unsqueeze(0),
-                "src_edge_type": dataset[i]['net_input.mol_src_edge_type'].unsqueeze(0),
+        return {"src_tokens": dataset[i]['net_input.mol_tokens'].unsqueeze(0),
+                "src_distance": dataset[i]['net_input.mol_holo_distance'].unsqueeze(0),
+                "src_coord": dataset[i]['net_input.mol_holo_coord'].unsqueeze(0),
+                "src_edge_type": dataset[i]['net_input.mol_edge_type'].unsqueeze(0),
         }
     def get_pocket_input(dataset,i):
-        return {"src_tokens": dataset[i]['net_input.pocket_src_tokens'].unsqueeze(0),
-                "src_distance": dataset[i]['net_input.pocket_src_distance'].unsqueeze(0),
-                "src_coord": dataset[i]['net_input.pocket_src_coord'].unsqueeze(0),
-                "src_edge_type": dataset[i]['net_input.pocket_src_edge_type'].unsqueeze(0),
+        return {"src_tokens": dataset[i]['net_input.pocket_tokens'].unsqueeze(0),
+                "src_distance": dataset[i]['net_input.pocket_distance'].unsqueeze(0),
+                "src_coord": dataset[i]['net_input.pocket_holo_coord'].unsqueeze(0),
+                "src_edge_type": dataset[i]['net_input.pocket_edge_type'].unsqueeze(0),
         }
     mole_input = get_mole_input(dataset,0)
     pocket_input = get_pocket_input(dataset,0)
@@ -201,14 +228,17 @@ if __name__ == "__main__":
      pocket_attn,
      pocket_padding
     ) = protein_encoder(**pocket_input,features_only = True)
-    decoder.register_diffusion_head("rotation", 3)
-    output = decoder(mole_embd, 
+    decoder.register_diffusion_pool_head("tr-rotation", 6)
+    decoder.register_diffusion_head("perturbation", 3)
+    t = torch.tensor([0.0])
+    output,padding_mask = decoder(mole_embd, 
             pocket_embd, 
+            t,
             mole_padding,
             pocket_padding,
             mole_attn, 
             pocket_attn, 
-            dataset[0]['target.cross_distance'].unsqueeze(0),
-            dataset[0]['target.cross_edge_type'].unsqueeze(0),
-            diffusion_heads = ["rotation"],
+            dataset[0]['net_input.cross_distance'].unsqueeze(0),
+            dataset[0]['net_input.cross_edge_type'].unsqueeze(0),
+            diffusion_heads = ["tr-rotation","perturbation"],
     )

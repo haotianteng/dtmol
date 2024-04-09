@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from typing import Optional
+from dtmol.utils.time_embedding import get_timestep_embedding_func
 from dtmol.utils.layer_norm import LayerNorm
 from dtmol.utils.base import get_activation_fn
 from dtmol.utils.attention import SelfMultiheadAttention
@@ -12,6 +13,33 @@ def gaussian(x, mean, std):
     pi = 3.14159
     a = (2 * pi) ** 0.5
     return torch.exp(-0.5 * (((x - mean) / std) ** 2)) / (a * std)
+
+@torch.jit.script
+def modulate(x, shift, scale):
+    return x * (1 + scale.unsqueeze(1)) + shift.unsqueeze(1)
+
+class Mlp(nn.Module):
+    """ A simple 2 layer perceptron with GELU activation and dropout.
+    """
+    def __init__(self, in_features, hidden_features=None, out_features=None, act_layer=nn.GELU, drop=0.):
+        super().__init__()
+        out_features = out_features or in_features
+        hidden_features = hidden_features or in_features
+        drop_probs = (drop,drop)
+
+        self.fc1 = nn.Linear(in_features, hidden_features)
+        self.act = act_layer()
+        self.drop1 = nn.Dropout(drop_probs[0])
+        self.fc2 = nn.Linear(hidden_features, out_features)
+        self.drop2 = nn.Dropout(drop_probs[1])
+
+    def forward(self, x):
+        x = self.fc1(x)
+        x = self.act(x)
+        x = self.drop1(x)
+        x = self.fc2(x)
+        x = self.drop2(x)
+        return x
 
 class GaussianLayer(nn.Module):
     """This will calculate the gaussian kernal for the given coordinates.
@@ -79,6 +107,185 @@ class GaussianAttentionLayer(nn.Module):
         std = self.stds.weight.float().view(-1).abs() + 1e-5 # [K]
         return scale * gaussian(mul*x.float(), mean, std).type_as(self.means.weight)
 
+
+class TransformerLayer(nn.Module):
+    """
+    Implements a Transformer Encoder Layer used in BERT/XLM style pre-trained
+    models.
+    """
+
+    def __init__(
+        self,
+        embed_dim: int = 768,
+        ffn_embed_dim: int = 3072,
+        attention_heads: int = 8,
+        dropout: float = 0.1,
+        attention_dropout: float = 0.1,
+        activation_dropout: float = 0.0,
+        activation_fn: str = "gelu",
+        post_ln = False,
+    ) -> None:
+        super().__init__()
+
+        # Initialize parameters
+        self.embed_dim = embed_dim
+        self.attention_heads = attention_heads
+        self.attention_dropout = attention_dropout
+
+        self.dropout = dropout
+        self.activation_dropout = activation_dropout
+        self.activation_fn = get_activation_fn(activation_fn)()
+        self.self_attn = SelfMultiheadAttention(
+            self.embed_dim,
+            attention_heads,
+            dropout=attention_dropout,
+        )
+        # layer norm associated with the self attention layer
+        self.self_attn_layer_norm = LayerNorm(self.embed_dim)
+        self.fc1 = nn.Linear(self.embed_dim, ffn_embed_dim)
+        self.fc2 = nn.Linear(ffn_embed_dim, self.embed_dim)
+        self.final_layer_norm = LayerNorm(self.embed_dim)
+        self.post_ln = post_ln
+
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        attn_bias: Optional[torch.Tensor] = None,
+        padding_mask: Optional[torch.Tensor] = None,
+        return_attn: bool=False,
+    ) -> torch.Tensor:
+        """
+        LayerNorm is applied either before or after the self-attention/ffn
+        modules similar to the original Transformer implementation.
+        """
+        residual = x
+        if not self.post_ln:
+            x = self.self_attn_layer_norm(x)
+        # new added
+        x = self.self_attn(
+            query=x,
+            key_padding_mask=padding_mask,
+            attn_bias=attn_bias,
+            return_attn=return_attn,
+        )
+        if return_attn:
+            x, attn_weights, attn_probs = x
+        x = F.dropout(x, p=self.dropout, training=self.training)
+        x = residual + x
+        if self.post_ln:
+            x = self.self_attn_layer_norm(x)
+
+        residual = x
+        if not self.post_ln:
+            x = self.final_layer_norm(x)
+        x = self.fc1(x)
+        x = self.activation_fn(x)
+        x = F.dropout(x, p=self.activation_dropout, training=self.training)
+        x = self.fc2(x)
+        x = F.dropout(x, p=self.dropout, training=self.training)
+        x = residual + x
+        if self.post_ln:
+            x = self.final_layer_norm(x)
+        if not return_attn:
+            return x
+        else:
+            return x, attn_weights, attn_probs
+
+class DiTLayer(nn.Module):
+    """
+    Implements a Transformer Encoder Layer used in BERT/XLM style pre-trained
+    models.
+    """
+
+    def __init__(
+        self,
+        embed_dim: int = 768,
+        ffn_embed_dim: int = 3072,
+        attention_heads: int = 8,
+        dropout: float = 0.1,
+        attention_dropout: float = 0.1,
+        activation_dropout: float = 0.0,
+        activation_fn: str = "gelu",
+    ) -> None:
+        super().__init__()
+
+        # Initialize parameters
+        self.embed_dim = embed_dim
+        self.attention_heads = attention_heads
+        self.attention_dropout = attention_dropout
+
+        self.dropout = dropout
+        self.activation_dropout = activation_dropout
+        self.activation_fn = get_activation_fn(activation_fn)
+        self.self_attn = SelfMultiheadAttention(
+            self.embed_dim,
+            num_heads=attention_heads,
+            dropout=attention_dropout,
+        )
+
+        # DiT block with adaptive layer norm zero (adaLN-Zero) conditioning.
+        self.norm1 = nn.LayerNorm(embed_dim, elementwise_affine=False, eps=1e-6)
+        self.norm2 = nn.LayerNorm(embed_dim, elementwise_affine=False, eps=1e-6)
+        self.mlp = Mlp(in_features=embed_dim, hidden_features=ffn_embed_dim, act_layer=self.activation_fn, drop=activation_dropout)
+        self.adaLN_modulation = nn.Sequential(
+            nn.SiLU(),
+            nn.Linear(embed_dim, 6 * embed_dim, bias=True)
+        )
+
+        # layer norm associated with the self attention layer
+        self.fc1 = nn.Linear(self.embed_dim, ffn_embed_dim)
+        self.fc2 = nn.Linear(ffn_embed_dim, self.embed_dim)
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        c: torch.Tensor,
+        attn_bias: Optional[torch.Tensor] = None,
+        padding_mask: Optional[torch.Tensor] = None,
+        return_attn: bool=False,
+    ) -> torch.Tensor:
+        """
+        LayerNorm is applied either before or after the self-attention/ffn
+        modules similar to the original Transformer implementation.
+        """
+        shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.adaLN_modulation(c).chunk(6, dim=1)
+        x = modulate(self.norm1(x), shift_msa, scale_msa)
+        # new added
+        x = self.self_attn(
+            query=x,
+            key_padding_mask=padding_mask,
+            attn_bias=attn_bias,
+            return_attn=return_attn,
+        )
+        if return_attn:
+            x, attn_weights, attn_probs = x
+        x = x + gate_msa.unsqueeze(1) * x
+        x = x + gate_mlp.unsqueeze(1) * self.mlp(modulate(self.norm2(x), shift_mlp, scale_mlp))
+        if not return_attn:
+            return x
+        else:
+            return x, attn_weights, attn_probs
+
+class DiTFinalLayer(nn.Module):
+    """
+    The final layer of DiT.
+    """
+    def __init__(self, hidden_size, out_channels):
+        super().__init__()
+        self.norm_final = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
+        self.linear = nn.Linear(hidden_size, out_channels, bias=True)
+        self.adaLN_modulation = nn.Sequential(
+            nn.SiLU(),
+            nn.Linear(hidden_size, 2 * hidden_size, bias=True)
+        )
+
+    def forward(self, x, c):
+        shift, scale = self.adaLN_modulation(c).chunk(2, dim=1)
+        x = modulate(self.norm_final(x), shift, scale)
+        x = self.linear(x)
+        return x
+
 class TransformerEncoderWithPair(nn.Module):
     def __init__(
         self,
@@ -114,7 +321,7 @@ class TransformerEncoderWithPair(nn.Module):
 
         self.layers = nn.ModuleList(
             [
-                TransformerEncoderLayer(
+                TransformerLayer(
                     embed_dim=self.embed_dim,
                     ffn_embed_dim=ffn_embed_dim,
                     attention_heads=attention_heads,
@@ -209,91 +416,153 @@ class TransformerEncoderWithPair(nn.Module):
 
         return x, attn_mask, delta_pair_repr, x_norm, delta_pair_repr_norm
 
-
-class TransformerEncoderLayer(nn.Module):
-    """
-    Implements a Transformer Encoder Layer used in BERT/XLM style pre-trained
-    models.
-    """
-
+class TransformerDecoderWithPair(nn.Module):
     def __init__(
         self,
+        encoder_layers: int = 6,
         embed_dim: int = 768,
         ffn_embed_dim: int = 3072,
         attention_heads: int = 8,
+        emb_dropout: float = 0.1,
         dropout: float = 0.1,
         attention_dropout: float = 0.1,
         activation_dropout: float = 0.0,
+        max_seq_len: int = 256,
         activation_fn: str = "gelu",
-        post_ln = False,
+        time_embedding_type = "sinusoidal",
+        post_ln: bool = False,
+        no_final_head_layer_norm: bool = False,
     ) -> None:
+
         super().__init__()
-
-        # Initialize parameters
+        self.emb_dropout = emb_dropout
+        self.max_seq_len = max_seq_len
         self.embed_dim = embed_dim
+        self.t_embedder = get_timestep_embedding_func(time_embedding_type, embed_dim)
         self.attention_heads = attention_heads
-        self.attention_dropout = attention_dropout
-
-        self.dropout = dropout
-        self.activation_dropout = activation_dropout
-        self.activation_fn = get_activation_fn(activation_fn)
-
-        self.self_attn = SelfMultiheadAttention(
-            self.embed_dim,
-            attention_heads,
-            dropout=attention_dropout,
+        self.emb_layer_norm = LayerNorm(self.embed_dim)
+        self.final_layer = DiTFinalLayer(embed_dim, embed_dim)
+        if not no_final_head_layer_norm:
+            self.final_head_layer_norm = LayerNorm(attention_heads)
+        else:
+            self.final_head_layer_norm = None
+        self.layers = nn.ModuleList(
+            [
+                DiTLayer(
+                    embed_dim=self.embed_dim,
+                    ffn_embed_dim=ffn_embed_dim,
+                    attention_heads=attention_heads,
+                    dropout=dropout,
+                    attention_dropout=attention_dropout,
+                    activation_dropout=activation_dropout,
+                    activation_fn=activation_fn,
+                )
+                for _ in range(encoder_layers)
+            ]
         )
-        # layer norm associated with the self attention layer
-        self.self_attn_layer_norm = LayerNorm(self.embed_dim)
-        self.fc1 = nn.Linear(self.embed_dim, ffn_embed_dim)
-        self.fc2 = nn.Linear(ffn_embed_dim, self.embed_dim)
-        self.final_layer_norm = LayerNorm(self.embed_dim)
-        self.post_ln = post_ln
+        self.initialize_parameters()
 
+    def initialize_parameters(self):
+        # Initialize transformer layers:
+        def _basic_init(module):
+            if isinstance(module, nn.Linear):
+                torch.nn.init.xavier_uniform_(module.weight)
+                if module.bias is not None:
+                    nn.init.constant_(module.bias, 0)
+        self.apply(_basic_init)
+        
+        # Initliaze the Dit Blocks
+        ## Initialize timestep embedding MLP:
+        nn.init.normal_(self.t_embedder.mlp[0].weight, std=0.02)
+        nn.init.normal_(self.t_embedder.mlp[2].weight, std=0.02)
+
+        ## Zero-out adaLN modulation layers in DiT blocks:
+        for block in self.layers:
+            nn.init.constant_(block.adaLN_modulation[-1].weight, 0)
+            nn.init.constant_(block.adaLN_modulation[-1].bias, 0)
+
+        ## Zero-out output layers:
+        nn.init.constant_(self.final_layer.adaLN_modulation[-1].weight, 0)
+        nn.init.constant_(self.final_layer.adaLN_modulation[-1].bias, 0)
+        nn.init.constant_(self.final_layer.linear.weight, 0)
+        nn.init.constant_(self.final_layer.linear.bias, 0)
 
     def forward(
         self,
-        x: torch.Tensor,
-        attn_bias: Optional[torch.Tensor] = None,
+        emb: torch.Tensor,
+        t: torch.Tensor,
+        attn_mask: Optional[torch.Tensor] = None,
         padding_mask: Optional[torch.Tensor] = None,
-        return_attn: bool=False,
     ) -> torch.Tensor:
-        """
-        LayerNorm is applied either before or after the self-attention/ffn
-        modules similar to the original Transformer implementation.
-        """
-        residual = x
-        if not self.post_ln:
-            x = self.self_attn_layer_norm(x)
-        # new added
-        x = self.self_attn(
-            query=x,
-            key_padding_mask=padding_mask,
-            attn_bias=attn_bias,
-            return_attn=return_attn,
-        )
-        if return_attn:
-            x, attn_weights, attn_probs = x
-        x = F.dropout(x, p=self.dropout, training=self.training)
-        x = residual + x
-        if self.post_ln:
-            x = self.self_attn_layer_norm(x)
 
-        residual = x
-        if not self.post_ln:
-            x = self.final_layer_norm(x)
-        x = self.fc1(x)
-        x = self.activation_fn(x)
-        x = F.dropout(x, p=self.activation_dropout, training=self.training)
-        x = self.fc2(x)
-        x = F.dropout(x, p=self.dropout, training=self.training)
-        x = residual + x
-        if self.post_ln:
-            x = self.final_layer_norm(x)
-        if not return_attn:
-            return x
+        bsz = emb.size(0)
+        seq_len = emb.size(1)
+        x = self.emb_layer_norm(emb)
+        x = F.dropout(x, p=self.emb_dropout, training=self.training)
+        t = self.t_embedder(t)
+        # account for padding while computing the representation
+        if padding_mask is not None:
+            x = x * (1 - padding_mask.unsqueeze(-1).type_as(x))
+        input_attn_mask = attn_mask
+        input_padding_mask = padding_mask
+
+        def fill_attn_mask(attn_mask, padding_mask, fill_val=float("-inf")):
+            if attn_mask is not None and padding_mask is not None:
+                # merge key_padding_mask and attn_mask
+                attn_mask = attn_mask.view(x.size(0), -1, seq_len, seq_len)
+                attn_mask.masked_fill_(
+                    padding_mask.unsqueeze(1).unsqueeze(2).to(torch.bool),
+                    fill_val,
+                )
+                attn_mask = attn_mask.view(-1, seq_len, seq_len)
+                padding_mask = None
+            return attn_mask, padding_mask
+
+        assert attn_mask is not None
+        attn_mask, padding_mask = fill_attn_mask(attn_mask, padding_mask)
+        for i in range(len(self.layers)):
+            x, attn_mask, _ = self.layers[i](
+                x,t, padding_mask=padding_mask, attn_bias=attn_mask, return_attn=True
+            )
+        x = self.final_layer(x, t)
+        def norm_loss(x, eps=1e-10, tolerance=1.0):
+            x = x.float()
+            max_norm = x.shape[-1] ** 0.5
+            norm = torch.sqrt(torch.sum(x**2, dim=-1) + eps)
+            error = torch.nn.functional.relu((norm - max_norm).abs() - tolerance)
+            return error
+
+        def masked_mean(mask, value, dim=-1, eps=1e-10):
+            return (
+                torch.sum(mask * value, dim=dim) / (eps + torch.sum(mask, dim=dim))
+            ).mean()
+        x_norm = norm_loss(x)
+        if input_padding_mask is not None:
+            token_mask = 1.0 - input_padding_mask.float()
         else:
-            return x, attn_weights, attn_probs
+            token_mask = torch.ones_like(x_norm, device=x_norm.device)
+        x_norm = masked_mean(token_mask, x_norm)
+        delta_pair_repr = attn_mask - input_attn_mask
+        delta_pair_repr, _ = fill_attn_mask(delta_pair_repr, input_padding_mask, 0)
+        attn_mask = (
+            attn_mask.view(bsz, -1, seq_len, seq_len).permute(0, 2, 3, 1).contiguous()
+        ) # [bsz, seq_len, seq_len, head]
+        delta_pair_repr = (
+            delta_pair_repr.view(bsz, -1, seq_len, seq_len)
+            .permute(0, 2, 3, 1)
+            .contiguous()
+        )
+
+        pair_mask = token_mask[..., None] * token_mask[..., None, :]
+        delta_pair_repr_norm = norm_loss(delta_pair_repr)
+        delta_pair_repr_norm = masked_mean(
+            pair_mask, delta_pair_repr_norm, dim=(-1, -2)
+        )
+
+        if self.final_head_layer_norm is not None:
+            delta_pair_repr = self.final_head_layer_norm(delta_pair_repr)
+
+        return x, attn_mask, delta_pair_repr, x_norm, delta_pair_repr_norm
 
 
 class MaskLMHead(nn.Module):
@@ -302,7 +571,7 @@ class MaskLMHead(nn.Module):
     def __init__(self, embed_dim, output_dim, activation_fn, weight=None):
         super().__init__()
         self.dense = nn.Linear(embed_dim, embed_dim)
-        self.activation_fn = utils.get_activation_fn(activation_fn)
+        self.activation_fn = get_activation_fn(activation_fn)()
         self.layer_norm = LayerNorm(embed_dim)
 
         if weight is None:
@@ -337,7 +606,7 @@ class ClassificationHead(nn.Module):
     ):
         super().__init__()
         self.dense = nn.Linear(input_dim, inner_dim)
-        self.activation_fn = get_activation_fn(activation_fn)
+        self.activation_fn = get_activation_fn(activation_fn)()
         self.dropout = nn.Dropout(p=pooler_dropout)
         self.out_proj = nn.Linear(inner_dim, num_classes)
 
@@ -364,8 +633,9 @@ class DiffusionHead(nn.Module):
         hidden_dim = input_dim if not hidden_dim else hidden_dim
         self.linear1 = nn.Linear(input_dim, hidden_dim)
         self.linear2 = nn.Linear(hidden_dim, out_dim)
-        self.activation_fn = get_activation_fn(activation_fn)
+        self.activation_fn = get_activation_fn(activation_fn)()
         self.layer_norm = LayerNorm(hidden_dim)
+        self.mse_loss = nn.MSELoss(reduction="none")
 
     def forward(self, x):
         x = self.linear1(x)
@@ -374,6 +644,49 @@ class DiffusionHead(nn.Module):
         x = self.linear2(x)
         return x
 
+    def loss(self, output, score, norm, padding_mask = None):
+        loss = self.mse_loss(output, score)
+        norm = norm.unsqueeze(-1)
+        mask = norm > 0
+        norm[~mask] = 1
+        loss = loss / norm
+        if padding_mask is not None:
+            mask = mask * (~padding_mask.unsqueeze(-1))
+            loss = loss * (~padding_mask.unsqueeze(-1))
+        return loss[mask.squeeze(-1)].mean()
+
+class DiffusionPoolHead(nn.Module):
+    """Head for system-level diffusion noise."""
+
+    def __init__(
+        self,
+        input_dim,
+        out_dim,
+        activation_fn,
+        hidden_dim=None,
+        dropout = 0.1,
+    ):
+        super().__init__()
+        hidden_dim = input_dim if not hidden_dim else hidden_dim
+        self.linear1 = nn.Linear(input_dim, hidden_dim)
+        self.out_proj = nn.Linear(hidden_dim, out_dim)
+        self.dropout = nn.Dropout(p=dropout)
+        self.activation_fn = get_activation_fn(activation_fn)()
+        self.mse_loss = nn.MSELoss(reduction="none")
+
+    def forward(self, x):
+        x = x[:, 0, :]  # take <s> token (equiv. to [CLS])
+        x = self.dropout(x)
+        x = self.linear1(x)
+        x = self.activation_fn(x)
+        x = self.dropout(x)
+        x = self.out_proj(x)
+        return x
+
+    def loss(self, output, score, norm):
+        loss = self.mse_loss(output, score)
+        loss = loss / norm.unsqueeze(-1)
+        return loss.mean()
 
 class NonLinearHead(nn.Module):
     """Head for simple classification tasks."""
@@ -389,14 +702,13 @@ class NonLinearHead(nn.Module):
         hidden = input_dim if not hidden else hidden
         self.linear1 = nn.Linear(input_dim, hidden)
         self.linear2 = nn.Linear(hidden, out_dim)
-        self.activation_fn = get_activation_fn(activation_fn)
+        self.activation_fn = get_activation_fn(activation_fn)()
 
     def forward(self, x):
         x = self.linear1(x)
         x = self.activation_fn(x)
         x = self.linear2(x)
         return x
-
 
 class DistanceHead(nn.Module):
     def __init__(
@@ -408,7 +720,7 @@ class DistanceHead(nn.Module):
         self.dense = nn.Linear(heads, heads)
         self.layer_norm = nn.LayerNorm(heads)
         self.out_proj = nn.Linear(heads, 1)
-        self.activation_fn = utils.get_activation_fn(activation_fn)
+        self.activation_fn = get_activation_fn(activation_fn)()
 
     def forward(self, x):
         bsz, seq_len, seq_len, _ = x.size()

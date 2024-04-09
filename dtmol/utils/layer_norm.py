@@ -1,6 +1,7 @@
 import torch
 import numbers
 import importlib
+from torch import nn
 from torch.nn.parameter import Parameter
 from torch.nn import init
 from torch.nn import functional as F
@@ -99,3 +100,43 @@ class LayerNorm(torch.nn.Module):
     def extra_repr(self):
         return '{normalized_shape}, eps={eps}, ' \
             'elementwise_affine={elementwise_affine}'.format(**self.__dict__)
+
+class AdaLayerNorm(nn.Module):
+    r"""
+    Norm layer modified to incorporate timestep embeddings.
+
+    Parameters:
+        embedding_dim (`int`): The size of each embedding vector.
+        num_embeddings (`int`): The size of the timestep embeddings.
+    """
+
+    def __init__(self, embedding_dim: int, num_embeddings: int):
+        super().__init__()
+        self.emb = nn.Embedding(num_embeddings, embedding_dim)
+        self.silu = nn.SiLU()
+        self.linear = nn.Linear(embedding_dim, embedding_dim * 2)
+        self.norm = nn.LayerNorm(embedding_dim, elementwise_affine=False)
+
+    def forward(self, x: torch.Tensor, time_step_embd: torch.Tensor) -> torch.Tensor:
+        emb = self.linear(self.silu(self.emb(time_step_embd)))
+        scale, shift = torch.chunk(emb, 2)
+        x = self.norm(x) * (1 + scale) + shift
+        return x
+
+if __name__ == "__main__":
+    # NLP Example
+    from dtmol.utils.time_embedding import get_timestep_embedding
+    time = torch.arange(0, 100)
+    embd_func = get_timestep_embedding('sinusoidal', 128, 5000)
+    batch, sentence_length, embedding_dim = 20, 5, 10
+    embedding = torch.randn(batch, sentence_length, embedding_dim)
+    layer_norm = nn.LayerNorm(embedding_dim)
+    # Activate module
+    layer_norm(embedding)
+    # Image Example
+    N, C, H, W = 20, 5, 10, 10
+    input = torch.randn(N, C, H, W)
+    # Normalize over the last three dimensions (i.e. the channel and spatial dimensions)
+    # as shown in the image below
+    layer_norm = nn.LayerNorm([C, H, W])
+    output = layer_norm(input)

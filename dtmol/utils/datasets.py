@@ -2,6 +2,7 @@ import lmdb
 import numpy as np
 import os
 import pickle
+from dtmol.utils.random_seed import torch_seed
 from functools import lru_cache
 from unicore.data import (
     NestedDictionaryDataset,
@@ -46,6 +47,7 @@ from unimol.data import (
     RightPadDatasetCross2D,
 ) # Additional load for cross (mole + protein) dataset
 from unicore.data import BaseWrapperDataset
+import torch
 from torch.utils.data import Dataset
 from argparse import Namespace
 from typing import Dict
@@ -123,7 +125,7 @@ class LMDBDataset:
             self.connect_db(self.db_path, save_to_self=True)
         datapoint_pickled = self.env.begin().get(self._keys[idx])
         data = pickle.loads(datapoint_pickled)
-        return data
+        return data    
 
 class CrossEdgeTypeDataset:
     def __init__(self, mol_dataset, pocket_dataset,num_types:int):
@@ -140,6 +142,53 @@ class CrossEdgeTypeDataset:
         target = self.pocket_dataset[idx].clone()
         edge_type = source.view(-1, 1) * self.num_types + target.view(1, -1)
         return edge_type
+
+class DiffusionDataset(BaseWrapperDataset):
+    def __init__(
+        self,
+        dataset,
+        seed,
+        diffuser,
+        is_train = True,
+    ):
+        super().__init__(dataset)
+        self.dataset = dataset
+        self.set_epoch(1)
+        self.diffuser = diffuser
+        self.seed = seed
+        self.istrain = is_train
+    
+    def set_epoch(self, epoch, **unused):
+        super().set_epoch(epoch)
+        self.epoch = epoch
+
+    @lru_cache(maxsize=16)
+    def __cached_item__(self, index: int, epoch: int):
+        item = np.array(self.dataset[index])[None,...]
+        with data_utils.numpy_seed(self.seed, epoch, index), torch_seed(self.seed, epoch, index):
+            diffused,score,norm,time_steps = self.diffuser(item)
+        return {"diffused": diffused[0].to(torch.float32), "score": score[0],"norm":norm[0], "time_steps":time_steps}
+    
+    def __getitem__(self, index: int):
+        return self.__cached_item__(index, self.epoch)
+    
+class SliceDataset(BaseWrapperDataset):
+    def __init__(self, dataset, start = None, end = None):
+        super().__init__(dataset)
+        self.start = start
+        self.end = end
+
+    def __len__(self):
+        return len(self.dataset)
+
+    @lru_cache(maxsize=16)
+    def __getitem__(self, index):
+        item = self.dataset[index]
+        if self.start:
+            item = item[self.start:]
+        if self.end:
+            item = item[:self.end]
+        return item
 
 class MoleculeDataset(DictDataset):
     """Read the molecular dataset"""
@@ -295,9 +344,6 @@ class ProteinDataset(DictDataset):
             tgt_dataset = PrependAndAppend(
                 encoder_target_dataset, self.dictionary.pad, self.dictionary.pad
             )
-            encoder_coord_dataset = PrependAndAppend(encoder_coord_dataset, 0.0, 0.0)
-            encoder_distance_dataset = DistanceDataset(encoder_coord_dataset)
-
             edge_type = EdgeTypeDataset(src_dataset, len(self.dictionary))
             coord_dataset = FromNumpyDataset(coord_dataset)
             coord_dataset = PrependAndAppend(coord_dataset, 0.0, 0.0)
@@ -336,12 +382,21 @@ class ProteinDataset(DictDataset):
         self.datasets[split] = dataset
 
 class CrossDataset(DictDataset):
-    def __init__(self, args, dictionary, pocket_dictionary):
+    def __init__(self, 
+                 args, 
+                 dictionary, 
+                 pocket_dictionary,
+                 mole_diffusion_sampler = None,
+                 protein_diffusion_sampler = None,
+                 atom_diffusion_sampler = None):
         super().__init__(args)
         self.dictionary = dictionary
         self.pocket_dictionary = pocket_dictionary
         self.args = Namespace(**args)
         self.seed = self.args.seed
+        self.mole_diffusion_sampler = mole_diffusion_sampler
+        self.protein_diffusion_sampler = protein_diffusion_sampler
+        self.atom_diffusion_sampler = atom_diffusion_sampler
         # add mask token
         self.mask_idx = dictionary.add_symbol("[MASK]", is_special=True)
         self.pocket_mask_idx = pocket_dictionary.add_symbol("[MASK]", is_special=True)
@@ -349,7 +404,19 @@ class CrossDataset(DictDataset):
 
     def load_lmdb(self, path, split):
         data_path = os.path.join(path, split + ".lmdb")
-        dataset = LMDBDataset(data_path)
+        self.raw_dataset = LMDBDataset(data_path)
+        self.transform(split = split,
+                        mole_diffusion_sampler = self.mole_diffusion_sampler,
+                        protein_diffusion_sampler = self.protein_diffusion_sampler,
+                        atom_diffusion_sampler = self.atom_diffusion_sampler)
+    
+    def transform(self,
+                  split,
+                  epoch = 1,
+                  mole_diffusion_sampler = None,
+                  protein_diffusion_sampler = None,
+                  atom_diffusion_sampler = None):
+        dataset = self.raw_dataset
         smi_dataset = KeyDataset(dataset, "smi")
         poc_dataset = KeyDataset(dataset, "pocket")
         dataset = ConformerSampleDockingPoseDataset(
@@ -359,10 +426,12 @@ class CrossDataset(DictDataset):
             "coordinates",
             "pocket_atoms",
             "pocket_coordinates",
-            "coordinates", # this is supposed to be holo coordinates (coordinates of ligand atom during binding) = coordinates
-            "pocket_coordinates", # holo pocket coordinates = pocket coordinates
-            False, # is_train = False, this will make holo coordinates = coordinates
+            "holo_coordinates", # The original ligand coordinates in the complex
+            "holo_pocket_coordinates", # holo pocket coordinates = pocket coordinates
+            True, # is_train = False, this will make holo coordinates = coordinates
         )
+        self.conformer_sample_dataset = dataset
+
         def PrependAndAppend(dataset, pre_token, app_token):
             dataset = PrependTokenDataset(dataset, pre_token)
             return AppendTokenDataset(dataset, app_token)
@@ -386,19 +455,49 @@ class CrossDataset(DictDataset):
         dataset = RemoveHydrogenPocketDataset(
             dataset, "atoms", "coordinates", "holo_coordinates", True, True
         )
+        # dataset = NormalizeDockingPoseDataset(
+        #     dataset,
+        #     "coordinates",
+        #     "pocket_coordinates",
+        #     "center_coordinates",
+        # )#Move the whole complex to centralize the protein pocket.
         normalization = False if split in ["train", "train.small"] else True
         apo_dataset = NormalizeDataset(dataset, "coordinates", normalize_coord=normalization)
         apo_dataset = NormalizeDataset(apo_dataset, "pocket_coordinates", normalize_coord=normalization)
-
         src_dataset = KeyDataset(apo_dataset, "atoms")
         src_dataset = TokenizeDataset(
             src_dataset, self.dictionary, max_seq_len=self.args.max_seq_len
         )
+        if atom_diffusion_sampler is not None:
+            diffused_dataset = DiffusionDataset(
+                src_dataset,
+                self.args.seed,
+                is_train=True,
+                diffuser=atom_diffusion_sampler,
+            )
+            diffused_dataset.set_epoch(epoch)
+            src_diffused_dataset = KeyDataset(diffused_dataset, "diffused")
+            src_diffused_dataset = PrependAndAppend(
+                src_diffused_dataset, self.dictionary.bos, self.dictionary.eos
+            )
+            diffused_edge_type = EdgeTypeDataset(
+                src_diffused_dataset, len(self.dictionary)
+            )
+            src_score_dataset = KeyDataset(diffused_dataset, "score")
+            src_score_dataset = FromNumpyDataset(src_score_dataset)
+            src_score_dataset = PrependAndAppend(src_score_dataset, 0.0, 0.0)
+            src_norm_dataset = KeyDataset(diffused_dataset, "norm")
+            src_norm_dataset = FromNumpyDataset(src_norm_dataset)
+            src_norm_dataset = PrependAndAppend(src_norm_dataset, 0.0, 0.0)
+            src_time_dataset = KeyDataset(diffused_dataset, "time_steps")
+            src_time_dataset = FromNumpyDataset(src_time_dataset)
         coord_dataset = KeyDataset(apo_dataset, "coordinates")
         src_dataset = PrependAndAppend(
             src_dataset, self.dictionary.bos, self.dictionary.eos
         )
         edge_type = EdgeTypeDataset(src_dataset, len(self.dictionary))
+
+        ## Processing coordinates
         coord_dataset = FromNumpyDataset(coord_dataset)
         distance_dataset = DistanceDataset(coord_dataset)
         coord_dataset = PrependAndAppend(coord_dataset, 0.0, 0.0)
@@ -420,7 +519,7 @@ class CrossDataset(DictDataset):
             src_pocket_dataset, len(self.pocket_dictionary)
         )
         coord_pocket_dataset = FromNumpyDataset(coord_pocket_dataset)
-        distance_pocket_dataset = DistanceDataset(coord_pocket_dataset)
+        distance_pocket_dataset = DistanceDataset(coord_pocket_dataset)        
         coord_pocket_dataset = PrependAndAppend(coord_pocket_dataset, 0.0, 0.0)
         distance_pocket_dataset = PrependAndAppend2DDataset(
             distance_pocket_dataset, 0.0
@@ -433,17 +532,64 @@ class CrossDataset(DictDataset):
             "holo_coordinates",
             "holo_pocket_coordinates",
             "holo_center_coordinates",
-        )
+        )   
         holo_coord_dataset = KeyDataset(holo_dataset, "holo_coordinates")
         holo_coord_dataset = FromNumpyDataset(holo_coord_dataset)
         holo_coord_pocket_dataset = KeyDataset(holo_dataset, "holo_pocket_coordinates")
         holo_coord_pocket_dataset = FromNumpyDataset(holo_coord_pocket_dataset)
-
+        holo_center_coordinates = KeyDataset(holo_dataset, "holo_center_coordinates")
         holo_cross_distance_dataset = CrossDistanceDataset(
             holo_coord_dataset, holo_coord_pocket_dataset
         )
-
         holo_distance_dataset = DistanceDataset(holo_coord_dataset)
+        ## Add diffusion to protein atom
+        if protein_diffusion_sampler is not None:
+            pocket_diffused_dataset = DiffusionDataset(
+                holo_coord_pocket_dataset,
+                self.args.seed,
+                is_train=True,
+                diffuser=protein_diffusion_sampler,
+            )
+            pocket_diffused_dataset.set_epoch(epoch)
+            coord_pocket_diffused_dataset = KeyDataset(pocket_diffused_dataset, "diffused")
+            distance_pocket_diffused_dataset = DistanceDataset(coord_pocket_diffused_dataset)
+            coord_pocket_diffused_dataset = PrependAndAppend(coord_pocket_diffused_dataset, 0.0, 0.0)
+            distance_pocket_diffused_dataset = PrependAndAppend2DDataset(distance_pocket_diffused_dataset, 0.0)
+            pocket_score_dataset = KeyDataset(pocket_diffused_dataset, "score")
+            pocket_score_dataset = FromNumpyDataset(pocket_score_dataset)
+            pocket_norm_dataset = KeyDataset(pocket_diffused_dataset, "norm")
+            pocket_norm_dataset = FromNumpyDataset(pocket_norm_dataset)
+            pocket_score_dataset = PrependAndAppend(pocket_score_dataset, 0.0, 0.0)
+            pocket_norm_dataset = PrependAndAppend(pocket_norm_dataset, 0.0, 0.0)
+            pocket_time_dataset = KeyDataset(pocket_diffused_dataset, "time_steps")
+            pocket_time_dataset = FromNumpyDataset(pocket_time_dataset)
+        ## Add diffusion noise to the dataset
+        if mole_diffusion_sampler is not None:
+            mol_diffused = DiffusionDataset(
+                holo_coord_dataset,
+                self.args.seed,
+                is_train=True,
+                diffuser=mole_diffusion_sampler,
+            )
+            mol_diffused.set_epoch(epoch)
+            holo_coord_diffused = KeyDataset(mol_diffused, "diffused")
+            holo_distance_diffused = DistanceDataset(holo_coord_diffused)
+            holo_coord_diffused = PrependAndAppend(holo_coord_diffused, 0.0, 0.0)
+            holo_distance_diffused = PrependAndAppend2DDataset(holo_distance_diffused, 0.0)
+            holo_time_dataset = KeyDataset(mol_diffused, "time_steps")
+            holo_time_dataset = FromNumpyDataset(holo_time_dataset)
+            coord_score_dataset = KeyDataset(mol_diffused, "score")
+            coord_trrot_score_dataset = SliceDataset(coord_score_dataset, end=2)
+            coord_trrot_score_dataset = FromNumpyDataset(coord_trrot_score_dataset)
+            coord_perturb_score_dataset = SliceDataset(coord_score_dataset, start=2)
+            coord_perturb_score_dataset = FromNumpyDataset(coord_perturb_score_dataset)
+            coord_perturb_score_dataset = PrependAndAppend(coord_perturb_score_dataset, 0.0, 0.0)
+            coord_norm_dataset = KeyDataset(mol_diffused, "norm")
+            coord_trrot_norm_dataset = SliceDataset(coord_norm_dataset, end=2)
+            coord_trrot_norm_dataset = FromNumpyDataset(coord_trrot_norm_dataset)
+            coord_perturb_norm_dataset = SliceDataset(coord_norm_dataset, start=2)
+            coord_perturb_norm_dataset = FromNumpyDataset(coord_perturb_norm_dataset)
+            coord_perturb_norm_dataset = PrependAndAppend(coord_perturb_norm_dataset, 0.0, 0.0)
         holo_coord_dataset = PrependAndAppend(holo_coord_dataset, 0.0, 0.0)
         holo_distance_dataset = PrependAndAppend2DDataset(holo_distance_dataset, 0.0)
         holo_coord_pocket_dataset = PrependAndAppend(
@@ -452,83 +598,193 @@ class CrossDataset(DictDataset):
         holo_cross_distance_dataset = PrependAndAppend2DDataset(
             holo_cross_distance_dataset, 0.0
         )
-
-        holo_center_coordinates = KeyDataset(holo_dataset, "holo_center_coordinates")
         holo_center_coordinates = FromNumpyDataset(holo_center_coordinates)
 
-        nest_dataset = NestedDictionaryDataset(
-            {
+        return_dict = {
                 "net_input": {
-                    "mol_src_tokens": RightPadDataset(
+                    "mol_tokens": RightPadDataset(
                         src_dataset,
                         pad_idx=self.dictionary.pad,
+                    ),
+                    "mol_edge_type": RightPadDataset2D(
+                        edge_type,
+                        pad_idx=0,
                     ),
                     "mol_src_coord": RightPadDatasetCoord(
                         coord_dataset,
                         pad_idx=0,
-                    ),
+                    ), #This coordinate is the molecule coordinate optimized by rdkit (without pocket atoms)
                     "mol_src_distance": RightPadDataset2D(
                         distance_dataset,
                         pad_idx=0,
-                    ),
-                    "mol_src_edge_type": RightPadDataset2D(
-                        edge_type,
-                        pad_idx=0,
-                    ),
-                    "pocket_src_tokens": RightPadDataset(
+                    ), #Corresponding distance matrix of the mol_src_coord
+                    "mol_holo_coord": RightPadDatasetCoord(holo_coord_dataset, pad_idx=0),
+                    "mol_holo_distance": RightPadDataset2D(
+                        holo_distance_dataset, pad_idx=0
+                    ),#Holo coordinate and distance should be used as label (true coordinate in complex but normalized by pocket center)
+                    "pocket_tokens": RightPadDataset(
                         src_pocket_dataset,
                         pad_idx=self.pocket_dictionary.pad,
                     ),
-                    "pocket_src_distance": RightPadDataset2D(
-                        distance_pocket_dataset,
+                    "pocket_edge_type": RightPadDataset2D(
+                        pocket_edge_type,
                         pad_idx=0,
                     ),
-                    "pocket_src_edge_type": RightPadDataset2D(
-                        pocket_edge_type,
+                    "pocket_distance": RightPadDataset2D(
+                        distance_pocket_dataset,
                         pad_idx=0,
                     ),
                     "pocket_src_coord": RightPadDatasetCoord(
                         coord_pocket_dataset,
                         pad_idx=0,
                     ),
-                },
-                "target": {
+                    "pocket_holo_coord": RightPadDatasetCoord(
+                        holo_coord_pocket_dataset, pad_idx=0
+                    ), #This is the normalized pocket_src_coord 
                     "cross_distance": RightPadDatasetCross2D(
                         holo_cross_distance_dataset, pad_idx=0
                     ),
                     "cross_edge_type": RightPadDatasetCross2D(
                         cross_edgetype_dataset, pad_idx=0
                     ),
-                    "holo_coord": RightPadDatasetCoord(holo_coord_dataset, pad_idx=0),
-                    "holo_distance_target": RightPadDataset2D(
-                        holo_distance_dataset, pad_idx=0
-                    ),
                 },
                 "smi_name": RawArrayDataset(smi_dataset),
                 "pocket_name": RawArrayDataset(poc_dataset),
-                "holo_center_coordinates": RightPadDataset(
-                    holo_center_coordinates,
-                    pad_idx=0,
-                ),
-            },
-        )
+                "holo_center_coordinates": holo_center_coordinates,
+            }
+        if atom_diffusion_sampler or protein_diffusion_sampler or mole_diffusion_sampler:
+            return_dict["diffused"] = {}
+        if atom_diffusion_sampler is not None:
+            return_dict['diffused'].update(
+                {   "mol_tokens": RightPadDataset(
+                        src_diffused_dataset, 
+                        pad_idx=self.dictionary.pad
+                    ),
+                    "mol_edge_type": RightPadDataset2D(
+                        diffused_edge_type, pad_idx=0
+                    ),
+                    "atom_diffuse_time": RightPadDataset(
+                        src_time_dataset, pad_idx=0
+                    ),
+                    "atom_diffuse_score": RightPadDataset(
+                        src_score_dataset, pad_idx=0
+                    ),
+                    "atom_diffuse_norm": RightPadDataset(
+                        src_norm_dataset, pad_idx=0
+                    ),
+                }
+            )
+        if protein_diffusion_sampler is not None:
+            return_dict["diffused"].update(
+                {   
+                    "pocket_holo_coord": RightPadDatasetCoord(
+                        coord_pocket_diffused_dataset, pad_idx=0
+                    ),
+                    "pocket_distance": RightPadDataset2D(
+                        distance_pocket_diffused_dataset, pad_idx=0
+                    ),
+                    "pocket_diffuse_time": pocket_time_dataset,
+                    "pocket_diffuse_score": RightPadDatasetCoord(
+                        pocket_score_dataset, pad_idx=0
+                    ),
+                    "pocket_diffuse_norm": RightPadDataset(
+                        pocket_norm_dataset, pad_idx=0
+                    ),
+                }
+            )
+        if mole_diffusion_sampler is not None:
+            return_dict["diffused"].update(
+                {   "mol_holo_coord": RightPadDatasetCoord(
+                        holo_coord_diffused, pad_idx=0
+                    ),
+                    "mol_holo_distance": RightPadDataset2D(
+                        holo_distance_diffused, pad_idx=0
+                    ),
+                    "mol_diffuse_time": holo_time_dataset,
+                    "mol_diffuse_trrot_score": RightPadDatasetCoord(
+                        coord_trrot_score_dataset, pad_idx=0
+                    ),
+                    "mol_diffuse_perturb_score": RightPadDatasetCoord(
+                        coord_perturb_score_dataset, pad_idx=0
+                    ),
+                    "mol_diffuse_trrot_norm": RightPadDataset(
+                        coord_trrot_norm_dataset, pad_idx=0
+                    ),
+                    "mol_diffuse_perturb_norm": RightPadDataset(
+                        coord_perturb_norm_dataset, pad_idx=0
+                    ),                    
+                }
+            )
+        nest_dataset = NestedDictionaryDataset(return_dict)
         if split.startswith("train"):
             nest_dataset = EpochShuffleDataset(
                 nest_dataset, len(nest_dataset), self.args.seed
             )
         self.datasets[split] = nest_dataset
 
-
 if __name__ == "__main__":
     from dtmol.utils.dictionary import Dictionary
-    ligand_dict = Dictionary.load("/home/haotiant/dtmol/models/pretrain/unimol_molecule_dict.txt")
-    protein_dict = Dictionary.load("/home/haotiant/dtmol/models/pretrain/unimol_protein_dict.txt")
+    from dtmol.dtmol_init import PRETRAIN_FOLDER
+    from matplotlib import pyplot as plt
+    ligand_dict = Dictionary.load(f"{PRETRAIN_FOLDER}/unimol_molecule_dict.txt")
+    protein_dict = Dictionary.load(f"{PRETRAIN_FOLDER}/unimol_protein_dict.txt")
     protein_path = "/data/unimol_data/protein_ligand_binding_pose_prediction/"
     test_config = {
         "seed": 0,
-        "max_seq_len": 200,
+        "max_seq_len": 1000,
         "max_pocket_atoms": 256,
     }
     pocket_dataset = CrossDataset(test_config,ligand_dict,protein_dict)
     pocket_dataset.load_lmdb(protein_path,"train")
-    print(pocket_dataset['train'][0]['target.cross_edge_type'])
+    pocket_dataset.transform("train")
+
+    #3D plot the pocket and ligand
+    idx = 0
+    from mpl_toolkits.mplot3d import Axes3D
+    fig = plt.figure()
+    print(pocket_dataset['train'][idx]['pocket_name'])
+    print(pocket_dataset['train'][idx]['smi_name'])
+    pocket = pocket_dataset['train'][idx]['net_input.pocket_holo_coord']
+    ligand = pocket_dataset['train'][idx]['net_input.mol_holo_coord']
+    ax = fig.add_subplot(111, projection='3d')
+    ax.scatter(pocket[:, 0], pocket[:, 1], pocket[:, 2], c='pink', marker='o', label = "pocket")
+    ax.scatter(ligand[:, 0], ligand[:, 1], ligand[:, 2], c='b', marker='o', label = "ligand")
+    
+
+    #Test diffuser
+    from dtmol.diffusion import RotationSampler, GaussianSampler, TranslationSampler, ChainSampler
+    from dtmol.diffusion import GeometricScheduler, PolynomialScheduler, CosineScheduler
+    T = 5000
+    cos_sch = CosineScheduler(T)
+    geo_sch = GeometricScheduler(T)
+    poly_sch = PolynomialScheduler(T)
+    rot_sampler = RotationSampler(schedular=geo_sch)
+    g_sampler = GaussianSampler(schedular = poly_sch)
+    g_sampler2 = GaussianSampler(schedular = geo_sch)
+    tr_sampler = TranslationSampler(schedular = cos_sch)
+    molecule_sampler = ChainSampler(rot_sampler).compose(tr_sampler).compose(g_sampler)
+    protein_sampler = ChainSampler(g_sampler2)
+    protein_sampler.conjugate(molecule_sampler)
+    diffuse_dataset = CrossDataset(args = test_config,
+                                   dictionary=ligand_dict,
+                                   pocket_dictionary=protein_dict,
+                                   mole_diffusion_sampler=molecule_sampler,
+                                   protein_diffusion_sampler=protein_sampler)
+    diffuse_dataset.load_lmdb(protein_path,"train")
+    diffused_pocket = diffuse_dataset['train'][idx]['diffused.pocket_holo_coord']
+    diffused_ligand = diffuse_dataset['train'][idx]['diffused.mol_holo_coord']
+    assert diffuse_dataset['train'][idx]['diffused.pocket_diffuse_time'] == diffuse_dataset['train'][idx]['diffused.mol_diffuse_time']
+    ax.scatter(diffused_pocket[:, 0], diffused_pocket[:, 1], diffused_pocket[:, 2], c='r', marker='o', label = "diffused pocket")
+    ax.scatter(diffused_ligand[:, 0], diffused_ligand[:, 1], diffused_ligand[:, 2], c='g', marker='o', label = "diffused ligand")
+    plt.legend()
+
+    print(f"Diffuse ligand score shape: {diffuse_dataset['train'][idx]['diffused.mol_diffuse_perturb_score'].shape}")
+    print(f"Diffuse ligand coordinate shape: {diffused_ligand.shape}")
+    print("""Notice the diffused score and ligand coordinates would have same shape with a length of n_atoms+2! 
+The reason is that for the additional dimension due to rotation and translation diffusion
+and for the prepend_and_append of <bos> and <eos> tokens""")
+    
+    print(f"Diffuse pocket score shape: {diffuse_dataset['train'][idx]['diffused.pocket_diffuse_score'].shape}")
+    print(f"Diffuse pocket coordinate shape: {diffused_pocket.shape}")
+    print("""Notice the diffused score and pocket coordinates would have same shape with a length of n_atoms+2!
+We prepend and append tokens to the pocket score, as pocket atom won't have rotation and translation diffuser""")
