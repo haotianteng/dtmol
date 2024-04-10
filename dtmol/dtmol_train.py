@@ -86,6 +86,10 @@ class DiffusionTrainer(Trainer):
                 wandb.log({"valid_loss": loss, "global_step": self.global_step})
         return loss
 
+    def record_config(self,config):
+        if self.use_wandb:
+            wandb.config.update(config)
+
 def worker(idx,world_size,args):
     distributed = world_size > 1
     train_config=  args['train']
@@ -101,6 +105,8 @@ def worker(idx,world_size,args):
 
     #create the model folder
     config = CONFIG()
+    config.TRAIN.update(train_config)
+    config.TRAIN['model_folder'] = model_folder
     os.makedirs(model_folder, exist_ok=True)
     
     ##% Buildt the model
@@ -127,6 +133,7 @@ def worker(idx,world_size,args):
         "max_seq_len": 768,
         "max_pocket_atoms": 256,
     }
+    config.DATASET = dataset_config
     binding_dataset = load_unimol_binding_data(dataset_config,ds_path)
     loader_dict = get_dataloader(binding_dataset,
                                  batch_size = args['batch_size'],

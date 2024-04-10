@@ -6,7 +6,11 @@ import pandas as pd
 import pickle
 from tqdm import tqdm
 from rdkit import Chem
+from rdkit.Chem import AllChem
 from biopandas.pdb import PandasPdb
+import logging
+logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s', level=logging.DEBUG)
+logger = logging.getLogger(__name__)
 
 def extract_pocket(pdb,ligand_coordinates,distance = 10):
     """Extract the atoms of the pocket from the protein-ligand complex by
@@ -21,7 +25,11 @@ def extract_pocket(pdb,ligand_coordinates,distance = 10):
     """
     if len(pdb) == 4:
         pdb_id = pdb
-        ppdb = PandasPdb().fetch_pdb(pdb_id)
+        try:
+            ppdb = PandasPdb().fetch_pdb(pdb_id)
+        except AttributeError:
+            logger.error(f"Failed to fetch the PDB ID {pdb_id}")
+
     elif os.path.isfile(pdb):
         pdb = os.path.abspath(pdb)
         ppdb = PandasPdb().read_pdb(pdb)
@@ -65,37 +73,54 @@ def sdf_to_dataframe(sdf_file):
     :return: pandas DataFrame with columns 'index', 'atom_name', 'x_coord', 'y_coord', 'z_coord'
     """
     # Create an SDMolSupplier object to read the SDF file
-    supplier = Chem.SDMolSupplier(sdf_file)
+    try:
+        supplier = Chem.SDMolSupplier(sdf_file)
+    except OSError:
+        logger.error(f"Failed to read the SDF file {sdf_file}")
+        return None, None
 
     # Initialize a list to hold atom data
     atom_data = []
-
+    smiles = None
     # Iterate over all molecules in the SDF file
     for mol in supplier:
         if mol is not None:  # Check if the molecule is successfully read
+            mol = Chem.RemoveHs(mol)
+            try:
+                smiles = Chem.MolToSmiles(mol)
+            except:
+                pass
+            mol = AllChem.AddHs(mol, addCoords=True) #This would add potential missing hydroten in the structure
             for atom in mol.GetAtoms():
                 atom_idx = atom.GetIdx()
                 element = atom.GetSymbol()
                 pos = mol.GetConformer().GetAtomPosition(atom_idx)
                 # get the SMILES
                 # Add atom data to the list
-                atom_data.append([atom_idx, element, pos.x, pos.y, pos.z])
-    try:
-        smiles = Chem.MolToSmiles(mol)
-    except:
-        smiles = None
+                atom_data.append([atom_idx, 
+                                  element, 
+                                  np.float32(pos.x), 
+                                  np.float32(pos.y), 
+                                  np.float32(pos.z)])
+            break # only read the first molecule
 
     # Create a DataFrame
     columns = ['index', 'atom_name', 'x_coord', 'y_coord', 'z_coord']
     df_atoms = pd.DataFrame(atom_data, columns=columns)
+    print(smiles)
     return df_atoms, smiles
 
 def process(pdbbind_dir):
     collection = []
-    for pdb_id in tqdm(os.listdir(pdbbind_dir)):
+    iterator = tqdm(os.listdir(pdbbind_dir), desc="Processing PDBBind")
+    for pdb_id in iterator:
+        iterator.set_description(desc = f"Processing {pdb_id}")
+        pdb_f = os.path.join(pdbbind_dir, pdb_id, pdb_id + "_protein_processed.pdb")
         ligands_f = os.path.join(pdbbind_dir, pdb_id, pdb_id + "_ligand.sdf")
         ligand_df,smiles = sdf_to_dataframe(ligands_f)
-        pocket_atoms = extract_pocket(pdb_id, ligand_df[['x_coord', 'y_coord', 'z_coord']].values)
+        if ligand_df is None:
+            continue
+        pocket_atoms = extract_pocket(pdb_f, ligand_df[['x_coord', 'y_coord', 'z_coord']].values)
         current = {"atoms":list(ligand_df['atom_name']), 
                    "coordinates":ligand_df[['x_coord', 'y_coord', 'z_coord']].values,
                    "smi":smiles,

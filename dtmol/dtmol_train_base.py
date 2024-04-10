@@ -6,6 +6,7 @@ Created on Thu Mar 11 16:07:12 2021
 import os
 import toml
 import torch
+import wandb
 import logging
 import itertools
 import numpy as np
@@ -78,7 +79,6 @@ class Trainer(object):
         self.use_wandb = config.TRAIN.get('use_wandb',True)
         self.distributed = distributed
         if self.use_wandb and self._on_main_rank():
-            import wandb
             wandb.init(project = config.TRAIN['project'],
                        group = config.TRAIN['group'],
                        name = config.TRAIN['experiment'])
@@ -186,6 +186,8 @@ class Trainer(object):
             config_dict = {x:getattr(self.config,x) for x in config_modules}
             with open(config_file,'w+') as f:
                 toml.dump(config_dict,f)
+            if self.use_wandb:
+                wandb.config.update(config_dict)
 
     def load(self,save_folder,update_global_step = True):
         self.save_folder = save_folder
