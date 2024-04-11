@@ -98,9 +98,9 @@ def worker(idx,world_size,args):
         dist.init_process_group(backend="nccl", rank=idx, world_size=world_size)
     package_path = dtmol.__path__[0]
     date = time.strftime("%Y%m%d")
-    model_folder = os.path.join(package_path, f"dtmol/models/bindingpose_{date}")
+    model_folder = os.path.join(package_path, f"models/bindingpose_{date}")
     model_name = args['model_name']
-    model_folder = os.path.join(package_path, f"dtmol/models/{model_name}_{date}")
+    model_folder = os.path.join(package_path, f"models/{model_name}_{date}")
     ds_path = args['data_f']
 
     #create the model folder
@@ -110,7 +110,7 @@ def worker(idx,world_size,args):
     os.makedirs(model_folder, exist_ok=True)
     
     ##% Buildt the model
-    pretrain_f = os.path.join(package_path, "dtmol/models/pretrain")
+    pretrain_f = os.path.join(package_path, "models/pretrain")
     config.MODEL={'pretrain_folder': pretrain_f,
                   'load_pretrain': True,
                   'decoder': {'layers':7,
@@ -165,6 +165,17 @@ def main(args):
     else:
         worker(0,world_size,args)
 
+def read_args():
+    import sys
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-i","--data_f",type=str,default = None)
+    parser.add_argument("--world_size",type=int,default=None)
+    parser.add_argument("--batch_size",type=int,default=None)
+    parser.add_argument("--model_name",type=str,default=None)    
+    parser.parse_args(sys.argv[1:])
+    return parser
+
 if __name__ == "__main__":  
     os.environ["MASTER_ADDR"] = "localhost"
     os.environ["MASTER_PORT"] = "29500"
@@ -180,4 +191,8 @@ if __name__ == "__main__":
             'fine_tune_pretrain': True,
         }
     }
+    parser = vars(read_args())
+    for key in parser:
+        if parser[key] is not None:
+            args[key] = parser[key]
     main(args)
