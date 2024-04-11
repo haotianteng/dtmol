@@ -9,6 +9,7 @@ import torch.optim as optim
 import torch.multiprocessing as mp
 import torch.distributed as dist
 import time
+import dtmol
 from dtmol.dtmol_model import ScoreNetwork
 from dtmol.utils.dictionary import Dictionary
 from dtmol.utils.datasets import CrossDataset
@@ -95,10 +96,9 @@ def worker(idx,world_size,args):
     train_config=  args['train']
     if distributed:
         dist.init_process_group(backend="nccl", rank=idx, world_size=world_size)
-    package_path = "/home/haotiant/Projects/CMU/dtmol/"
+    package_path = dtmol.__path__[0]
     date = time.strftime("%Y%m%d")
     model_folder = os.path.join(package_path, f"dtmol/models/bindingpose_{date}")
-    package_path = args['package_path']
     model_name = args['model_name']
     model_folder = os.path.join(package_path, f"dtmol/models/{model_name}_{date}")
     ds_path = args['data_f']
@@ -171,7 +171,6 @@ if __name__ == "__main__":
     args = {
         'world_size': 2,
         'batch_size': 8,
-        'package_path': "/home/haotiant/Projects/CMU/dtmol/",
         'model_name': "bindingpose",
         'data_f': "/data/unimol_data/protein_ligand_binding_pose_prediction/",
         'train':{
