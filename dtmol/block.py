@@ -644,12 +644,13 @@ class DiffusionHead(nn.Module):
         x = self.linear2(x)
         return x
 
-    def loss(self, output, score, norm, padding_mask = None):
+    def loss(self, output, score, norm, padding_mask = None, norm_weighted = False):
         loss = self.mse_loss(output, score)
         norm = norm.unsqueeze(-1)
         mask = norm > 0
         norm[~mask] = 1
-        loss = loss / norm
+        if norm_weighted:
+            loss = loss / norm
         if padding_mask is not None:
             mask = mask * (~padding_mask.unsqueeze(-1))
             loss = loss * (~padding_mask.unsqueeze(-1))
@@ -683,9 +684,10 @@ class DiffusionPoolHead(nn.Module):
         x = self.out_proj(x)
         return x
 
-    def loss(self, output, score, norm):
+    def loss(self, output, score, norm, norm_weighted = False):
         loss = self.mse_loss(output, score)
-        loss = loss / norm.unsqueeze(-1)
+        if norm_weighted:
+            loss = loss / norm.unsqueeze(-1)
         return loss.mean()
 
 class NonLinearHead(nn.Module):

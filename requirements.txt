@@ -1,2 +1,3 @@
 biopandas==0.4.1
 lmdb==1.4.1
+rdkit

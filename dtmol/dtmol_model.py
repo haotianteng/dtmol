@@ -102,11 +102,11 @@ class ScoreNetwork(nn.ModuleDict):
 
         return output, padding_mask
 
-    def diffusion_loss(self, output, padding_mask, diffused_dict, atom_diffusion=False):
+    def diffusion_loss(self, output, padding_mask, diffused_dict, atom_diffusion=False, norm_weighted=False):
         losses = []
         mol_trrot_score = diffused_dict['mol_diffuse_trrot_score'][:,:2,:].to(torch.float32)
         mol_score = diffused_dict['mol_diffuse_perturb_score'].to(torch.float32)
-        mol_norm = diffused_dict['mol_diffuse_perturb_norm'].to(torch.float32)
+        mol_norm = diffused_dict['mol_diffuse_perturb_norm'].to(torch.float32) 
         mol_trrot_norm = diffused_dict['mol_diffuse_trrot_norm'][:,:2].to(torch.float32)
         pocket_score = diffused_dict['pocket_diffuse_score'].to(torch.float32)
         pocket_norm = diffused_dict['pocket_diffuse_norm'].to(torch.float32)
@@ -114,10 +114,16 @@ class ScoreNetwork(nn.ModuleDict):
         perturbation_norm = torch.cat([mol_norm, pocket_norm], axis=1)
         tr_rot = output['tr-rotation'].view(-1, 2, 3)  # [B,6] -> [B,2,3]
         pert = output['perturbation']
-        trrot_loss = self['decoder'].diffusion_heads['tr-rotation'].loss(tr_rot, mol_trrot_score, mol_trrot_norm)
-
+        trrot_loss = self['decoder'].diffusion_heads['tr-rotation'].loss(tr_rot, 
+                                                                         mol_trrot_score, 
+                                                                         norm = mol_trrot_norm,
+                                                                         norm_weighted = True)
         losses.append(trrot_loss)
-        pert_loss = self['decoder'].diffusion_heads['perturbation'].loss(pert, perturbation_score, perturbation_norm, padding_mask)
+        pert_loss = self['decoder'].diffusion_heads['perturbation'].loss(pert, 
+                                                                         perturbation_score, 
+                                                                         norm = perturbation_norm, 
+                                                                         padding_mask = padding_mask, 
+                                                                         norm_weighted = norm_weighted)
         losses.append(pert_loss)
         if atom_diffusion:
             raise NotImplementedError("Atom diffusion is not implemented yet.")

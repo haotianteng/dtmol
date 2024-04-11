@@ -58,36 +58,41 @@ class DiffusionTrainer(Trainer):
                 if i_step % valid_every_n_steps == 0:
                     with torch.no_grad():
                         valid_batch = next(iter(self.eval_ds))
-                        valid_loss = self.valid_step(valid_batch)
+                        trrot_loss,pert_loss = self.valid_step(valid_batch)
                         if self._on_main_rank():
-                            msg = f"Epoch {epoch_i}: Step {i_step}, train loss {loss:.4f}, valid loss {valid_loss:.4f}"
+                            msg = f"Epoch {epoch_i}: Step {i_step}, train loss {loss:.4f}, valid trrot_loss {trrot_loss:.4f}, perturbation loss {pert_loss:.4f}"
                             self.logger.info(msg)
                             if self.use_wandb:
                                 wandb.log({"epoch":epoch_i,
                                         "train_loss": loss, 
-                                        "valid_loss": valid_loss, 
                                         "global_step": self.global_step})
                 self.global_step += 1
 
-    def loss(self, output, padding_mask, batch):
+    def loss(self, output, padding_mask, batch,norm_weighted = False):
         if self.distributed:
-            losses = self.nets.module.diffusion_loss(output, padding_mask.clone(), batch['diffused'])
+            losses = self.nets.module.diffusion_loss(output, 
+                                                     padding_mask.clone(), 
+                                                     batch['diffused'], 
+                                                     norm_weighted=norm_weighted)
         else:
-            losses = self.nets.diffusion_loss(output, padding_mask.clone(), batch['diffused'])
+            losses = self.nets.diffusion_loss(output, 
+                                              padding_mask.clone(), 
+                                              batch['diffused'],
+                                              norm_weighted=norm_weighted)
         return losses
 
     def train_step(self, batch):
         output, padding_mask = self.nets(batch)
-        loss = sum(self.loss(output, padding_mask, batch))
+        loss = sum(self.loss(output, padding_mask, batch, norm_weighted=self.config.TRAIN['norm_weighted']))
         return loss
 
     def valid_step(self, batch):
         with torch.no_grad():
             output, padding_mask = self.nets(batch)
-            loss = sum(self.loss(output, padding_mask, batch))
+            trrot_loss, pert_loss = self.loss(output, padding_mask, batch,norm_weighted=False)
             if self.use_wandb and self._on_main_rank():
-                wandb.log({"valid_loss": loss, "global_step": self.global_step})
-        return loss
+                wandb.log({"valid_trrot_loss": trrot_loss,"perturbation loss":pert_loss, "global_step": self.global_step})
+        return trrot_loss, pert_loss
 
     def record_config(self,config):
         if self.use_wandb:
@@ -179,17 +184,23 @@ if __name__ == "__main__":
             'learning_rate':4e-3,
             'epoches': 100,
             'report_every': 10,
-            'fine_tune_pretrain': True,
+            'fine_tune_pretrain': False,
+            'norm_weighted': False, # if the perturbation loss is weighted by normalization factor
         }
     }
     parser = argparse.ArgumentParser()
     parser.add_argument("-i","--data_f",type=str,default = None)
     parser.add_argument("--world_size",type=int,default=None)
     parser.add_argument("--batch_size",type=int,default=None)
-    parser.add_argument("--model_name",type=str,default=None)    
+    parser.add_argument("--model_name",type=str,default=None)
+    parser.add_argument("--fine_tune_pretrain",type=bool,default=None)
     cmd_args = vars(parser.parse_args(sys.argv[1:]))
     #update the args with the parsed args if parser is not None
     for key in cmd_args:
         if cmd_args[key] is not None:
-            args[key] = cmd_args[key]
+            try:
+                args[key] = cmd_args[key]
+            except KeyError:
+                try:
+                    args['train'][key] = cmd_args[key]
     main(args)
