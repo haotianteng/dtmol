@@ -203,4 +203,6 @@ if __name__ == "__main__":
             except KeyError:
                 try:
                     args['train'][key] = cmd_args[key]
+                except KeyError:
+                    pass
     main(args)
