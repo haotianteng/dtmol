@@ -8,6 +8,8 @@ import torch.nn.functional as F
 import torch.optim as optim
 import torch.multiprocessing as mp
 import torch.distributed as dist
+import sys
+import argparse
 import time
 import dtmol
 from dtmol.dtmol_model import ScoreNetwork
@@ -165,17 +167,6 @@ def main(args):
     else:
         worker(0,world_size,args)
 
-def read_args():
-    import sys
-    import argparse
-    parser = argparse.ArgumentParser()
-    parser.add_argument("-i","--data_f",type=str,default = None)
-    parser.add_argument("--world_size",type=int,default=None)
-    parser.add_argument("--batch_size",type=int,default=None)
-    parser.add_argument("--model_name",type=str,default=None)    
-    parser.parse_args(sys.argv[1:])
-    return parser
-
 if __name__ == "__main__":  
     os.environ["MASTER_ADDR"] = "localhost"
     os.environ["MASTER_PORT"] = "29500"
@@ -191,8 +182,14 @@ if __name__ == "__main__":
             'fine_tune_pretrain': True,
         }
     }
-    parser = vars(read_args())
-    for key in parser:
-        if parser[key] is not None:
-            args[key] = parser[key]
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-i","--data_f",type=str,default = None)
+    parser.add_argument("--world_size",type=int,default=None)
+    parser.add_argument("--batch_size",type=int,default=None)
+    parser.add_argument("--model_name",type=str,default=None)    
+    cmd_args = vars(parser.parse_args(sys.argv[1:]))
+    #update the args with the parsed args if parser is not None
+    for key in cmd_args:
+        if cmd_args[key] is not None:
+            args[key] = cmd_args[key]
     main(args)
