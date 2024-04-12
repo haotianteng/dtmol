@@ -551,9 +551,9 @@ class CrossDataset(DictDataset):
                 diffuser=protein_diffusion_sampler,
             )
             pocket_diffused_dataset.set_epoch(epoch)
-            coord_pocket_diffused_dataset = KeyDataset(pocket_diffused_dataset, "diffused")
-            distance_pocket_diffused_dataset = DistanceDataset(coord_pocket_diffused_dataset)
-            coord_pocket_diffused_dataset = PrependAndAppend(coord_pocket_diffused_dataset, 0.0, 0.0)
+            coord_pocket_diffused_dataset_nocat = KeyDataset(pocket_diffused_dataset, "diffused")
+            distance_pocket_diffused_dataset = DistanceDataset(coord_pocket_diffused_dataset_nocat)
+            coord_pocket_diffused_dataset = PrependAndAppend(coord_pocket_diffused_dataset_nocat, 0.0, 0.0)
             distance_pocket_diffused_dataset = PrependAndAppend2DDataset(distance_pocket_diffused_dataset, 0.0)
             pocket_score_dataset = KeyDataset(pocket_diffused_dataset, "score")
             pocket_score_dataset = FromNumpyDataset(pocket_score_dataset)
@@ -572,9 +572,9 @@ class CrossDataset(DictDataset):
                 diffuser=mole_diffusion_sampler,
             )
             mol_diffused.set_epoch(epoch)
-            holo_coord_diffused = KeyDataset(mol_diffused, "diffused")
-            holo_distance_diffused = DistanceDataset(holo_coord_diffused)
-            holo_coord_diffused = PrependAndAppend(holo_coord_diffused, 0.0, 0.0)
+            holo_coord_diffused_nocat = KeyDataset(mol_diffused, "diffused")
+            holo_distance_diffused = DistanceDataset(holo_coord_diffused_nocat)
+            holo_coord_diffused = PrependAndAppend(holo_coord_diffused_nocat, 0.0, 0.0)
             holo_distance_diffused = PrependAndAppend2DDataset(holo_distance_diffused, 0.0)
             holo_time_dataset = KeyDataset(mol_diffused, "time_steps")
             holo_time_dataset = FromNumpyDataset(holo_time_dataset)
@@ -590,6 +590,23 @@ class CrossDataset(DictDataset):
             coord_perturb_norm_dataset = SliceDataset(coord_norm_dataset, start=2)
             coord_perturb_norm_dataset = FromNumpyDataset(coord_perturb_norm_dataset)
             coord_perturb_norm_dataset = PrependAndAppend(coord_perturb_norm_dataset, 0.0, 0.0)
+        if mole_diffusion_sampler is not None or protein_diffusion_sampler is not None:
+            if mole_diffusion_sampler is None:
+                holo_coord_diffused_nocat = holo_coord_dataset
+            if protein_diffusion_sampler is None:
+                coord_pocket_diffused_dataset_nocat = holo_coord_pocket_dataset
+            diffuse_cross_distance_dataset = CrossDistanceDataset(
+                holo_coord_diffused_nocat, coord_pocket_diffused_dataset_nocat
+            )
+            diffuse_cross_distance_dataset = PrependAndAppend2DDataset(
+                diffuse_cross_distance_dataset, 0.0
+            )
+        if atom_diffusion_sampler is not None:
+            diffused_cross_edge_type = CrossEdgeTypeDataset(
+                src_diffused_dataset, coord_pocket_diffused_dataset, len(self.dictionary)
+            )
+        else:
+            diffused_cross_edge_type = cross_edgetype_dataset
         holo_coord_dataset = PrependAndAppend(holo_coord_dataset, 0.0, 0.0)
         holo_distance_dataset = PrependAndAppend2DDataset(holo_distance_dataset, 0.0)
         holo_coord_pocket_dataset = PrependAndAppend(
@@ -713,6 +730,16 @@ class CrossDataset(DictDataset):
                     "mol_diffuse_perturb_norm": RightPadDataset(
                         coord_perturb_norm_dataset, pad_idx=0
                     ),                    
+                }
+            )
+        if mole_diffusion_sampler is not None or protein_diffusion_sampler is not None or atom_diffusion_sampler is not None:
+            return_dict["diffused"].update(
+                {   "cross_distance": RightPadDatasetCross2D(
+                        diffuse_cross_distance_dataset, pad_idx=0
+                    ),
+                    "cross_edge_type": RightPadDatasetCross2D(
+                        diffused_cross_edge_type, pad_idx=0
+                    ),
                 }
             )
         nest_dataset = NestedDictionaryDataset(return_dict)

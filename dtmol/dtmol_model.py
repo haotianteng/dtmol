@@ -74,8 +74,8 @@ class ScoreNetwork(nn.ModuleDict):
                                                padding_protein = pocket_padding,
                                                attn_mole = mole_attn, 
                                                attn_protein = pocket_attn, 
-                                               cross_distance = batch['net_input']['cross_distance'],
-                                               cross_edges = batch['net_input']['cross_edge_type'],
+                                               cross_distance = batch['diffused']['cross_distance'],
+                                               cross_edges = batch['diffused']['cross_edge_type'],
                                                diffusion_heads=["tr-rotation", "perturbation"])
         
         ##% debugging code for NaN loss
