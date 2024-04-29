@@ -1,3 +1,5 @@
 biopandas==0.4.1
 lmdb==1.4.1
 rdkit
+git+https://github.com/dptech-corp/Uni-Core.git
+git+https://github.com/dptech-corp/Uni-Mol.git@7394647#subdirectory=unimol
