@@ -57,8 +57,15 @@ class DiffusionTrainer(Trainer):
                     self.save()
                 if i_step % valid_every_n_steps == 0:
                     with torch.no_grad():
-                        valid_batch = next(iter(self.eval_ds))
-                        trrot_loss,pert_loss = self.valid_step(valid_batch)
+                        trrot_losses, pert_losses = [], []
+                        for valid_i,valid_batch in enumerate(self.eval_ds):
+                            trrot_loss,pert_loss = self.valid_step(valid_batch)
+                            trrot_losses.append(trrot_loss.item())
+                            pert_losses.append(pert_loss.item())
+                            if valid_i > self.config.TRAIN['valid_first_n']:
+                                break
+                        trrot_loss = np.mean(trrot_losses)
+                        pert_loss = np.mean(pert_losses)
                         if self._on_main_rank():
                             msg = f"Epoch {epoch_i}: Step {i_step}, train loss {loss:.4f}, valid trrot_loss {trrot_loss:.4f}, perturbation loss {pert_loss:.4f}"
                             self.logger.info(msg)
@@ -82,7 +89,13 @@ class DiffusionTrainer(Trainer):
         return losses
 
     def train_step(self, batch):
+        # print(batch['diffused']['mol_diffuse_time'])
+        # print(batch['diffused']['mol_diffuse_perturb_score'])
+        # print(batch['diffused']['mol_diffuse_perturb_score'].shape)
+        # print(batch['net_input']['mol_holo_coord'].shape)
         output, padding_mask = self.nets(batch)
+        print(output['tr-rotation'].shape)
+        print(output['perturbation'].shape)
         loss = sum(self.loss(output, padding_mask, batch, norm_weighted=self.config.TRAIN['norm_weighted']))
         return loss
 
@@ -93,6 +106,12 @@ class DiffusionTrainer(Trainer):
             if self.use_wandb and self._on_main_rank():
                 wandb.log({"valid_trrot_loss": trrot_loss,"perturbation loss":pert_loss, "global_step": self.global_step})
         return trrot_loss, pert_loss
+
+    def eval_step(self, batch):
+        with torch.no_grad():
+            output, padding_mask = self.nets(batch)
+            loss = sum(self.loss(output, padding_mask, batch))
+        return loss
 
     def record_config(self,config):
         if self.use_wandb:
@@ -181,11 +200,13 @@ if __name__ == "__main__":
         'model_name': "bindingpose",
         'data_f': "/data/unimol_data/protein_ligand_binding_pose_prediction/",
         'train':{
-            'learning_rate':4e-3,
+            'learning_rate':1e-4,
             'epoches': 100,
             'report_every': 10,
+            'valid_first_n': 10,
             'fine_tune_pretrain': False,
             'norm_weighted': False, # if the perturbation loss is weighted by normalization factor
+            'use_wandb': True,
         }
     }
     parser = argparse.ArgumentParser()
@@ -193,16 +214,19 @@ if __name__ == "__main__":
     parser.add_argument("--world_size",type=int,default=None)
     parser.add_argument("--batch_size",type=int,default=None)
     parser.add_argument("--model_name",type=str,default=None)
-    parser.add_argument("--fine_tune_pretrain",type=bool,default=None)
+    parser.add_argument("--fine_tune_pretrain",action='store_true',dest = 'fine_tune_pretrain')
+    parser.add_argument("--no_wandb",action='store_false',dest='use_wandb')
     cmd_args = vars(parser.parse_args(sys.argv[1:]))
+    print(cmd_args)
     #update the args with the parsed args if parser is not None
     for key in cmd_args:
         if cmd_args[key] is not None:
-            try:
+            if key in args:
                 args[key] = cmd_args[key]
-            except KeyError:
-                try:
-                    args['train'][key] = cmd_args[key]
-                except KeyError:
-                    pass
+            elif key in args['train']:
+                args['train'][key] = cmd_args[key]
+            else:
+                print('Warning: key {key} is not found in the args, will create a new key in the base-level of args.')
+                args[key] = cmd_args[key]
+    print(args)
     main(args)

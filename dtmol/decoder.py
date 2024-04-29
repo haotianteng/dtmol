@@ -82,9 +82,9 @@ class Decoder(nn.Module):
         """
         full_embd = torch.cat([embd_molecule, embd_protein], dim=1)
         if padding_molecule is None:
-            padding_molecule = torch.zeros(embd_molecule.size(0), embd_molecule.size(1)).to(embd_molecule.device)
+            padding_molecule = torch.zeros(embd_molecule.size(0), embd_molecule.size(1),dtype = torch.bool).to(embd_molecule.device)
         if padding_protein is None:
-            padding_protein = torch.zeros(embd_protein.size(0), embd_protein.size(1)).to(embd_protein.device)
+            padding_protein = torch.zeros(embd_protein.size(0), embd_protein.size(1),dtype = torch.bool).to(embd_protein.device)
         full_padding = torch.cat([padding_molecule, padding_protein], dim=1)
         n_molecule = embd_molecule.size(1)
         n_protein = embd_protein.size(1)
@@ -168,6 +168,7 @@ class Decoder(nn.Module):
 
     def diffusion_loss(self, output, scores):
         """Compute the loss for the diffusion heads."""
+        # deprecated, the diffusion loss is now defined in each diffusion head module.
         pass
 
 if __name__ == "__main__":

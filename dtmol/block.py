@@ -233,10 +233,6 @@ class DiTLayer(nn.Module):
             nn.Linear(embed_dim, 6 * embed_dim, bias=True)
         )
 
-        # layer norm associated with the self attention layer
-        self.fc1 = nn.Linear(self.embed_dim, ffn_embed_dim)
-        self.fc2 = nn.Linear(ffn_embed_dim, self.embed_dim)
-
     def forward(
         self,
         x: torch.Tensor,

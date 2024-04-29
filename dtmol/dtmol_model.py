@@ -59,9 +59,25 @@ class ScoreNetwork(nn.ModuleDict):
                 "src_coord": batch['diffused']['mol_holo_coord'],
                 "src_edge_type": batch[atom_key]['mol_edge_type']}
     
-    def forward(self,batch):
-        mole_input = self._get_mole_diffused(batch)
-        pocket_input = self._get_pocket_diffused(batch)
+    def _get_pocket_eval(self, batch):
+        return {"src_tokens": batch['net_input']['pocket_tokens'],
+                "src_distance": batch['net_input']['pocket_distance'],
+                "src_coord": batch['net_input']['pocket_holo_coord'],
+                "src_edge_type": batch['net_input']['pocket_edge_type']}
+    
+    def _get_mole_eval(self, batch):
+        return {"src_tokens": batch['net_input']['mol_tokens'],
+                "src_distance": batch['net_input']['mol_src_distance'],
+                "src_coord": batch['net_input']['mol_src_coord'],
+                "src_edge_type": batch['net_input']['mol_edge_type']}
+
+    def forward(self,batch,training = True):
+        if training:
+            mole_input = self._get_mole_diffused(batch)
+            pocket_input = self._get_pocket_diffused(batch)
+        else:
+            mole_input = self._get_mole_eval(batch)
+            pocket_input = self._get_pocket_eval(batch)
         (mole_embd, mole_attn, mole_padding) = self['ligand_encoder'](**mole_input, features_only=True)
         (pocket_embd, pocket_attn, pocket_padding) = self['protein_encoder'](**pocket_input, features_only=True)
         mole_time = batch['diffused']['mol_diffuse_time']
@@ -79,19 +95,18 @@ class ScoreNetwork(nn.ModuleDict):
                                                diffusion_heads=["tr-rotation", "perturbation"])
         
         ##% debugging code for NaN loss
-        decoder_inpt = (mole_embd, 
-                        pocket_embd, 
-                        mole_time.squeeze(1), 
-                        mole_padding, 
-                        pocket_padding, 
-                        mole_attn, 
-                        pocket_attn, 
-                        batch['net_input']['cross_distance'], 
-                        batch['net_input']['cross_edge_type'])
-        for input in decoder_inpt:
-            if torch.isnan(input).any():
+        decoder_inpt = {"mole_embd":mole_embd, 
+                        "pocket_embd":pocket_embd,
+                        "mole_time":mole_time,
+                        "mole_attn":mole_attn,
+                        "pocket_attn":pocket_attn,
+                        "cross_distance":batch['diffused']['cross_distance'],
+                        "cross_edges":batch['diffused']['cross_edge_type']}
+        
+        for key, input in decoder_inpt.items():
+            if (input is None) or (torch.isnan(input).any()):
                 print("NaN detected in decoder input")
-                print("input:", input)
+                print(f"{key} input:", input)
                 raise
 
         if torch.isnan(output['tr-rotation']).any() or torch.isnan(output['perturbation']).any():
