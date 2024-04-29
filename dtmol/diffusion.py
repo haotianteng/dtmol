@@ -394,8 +394,6 @@ class RotationSampler(BaseSampler):
         eular_vec = np.vstack([sample_vec(eps[i])for i in range(b)])
         score = np.vstack([self.score(e,vec) for e,vec in zip(eps,eular_vec)])
         score = score if self.return_negative_score else -score #score is already negative score.
-        print(f"eular_vec: {eular_vec}")
-        print(f"score: {score}")
         norm = score_norm(eps)[...,None]
         with torch.no_grad():
             Rot = torch.Tensor(Rotation.from_rotvec(eular_vec).as_matrix())
