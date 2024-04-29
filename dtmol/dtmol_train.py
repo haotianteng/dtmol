@@ -89,13 +89,7 @@ class DiffusionTrainer(Trainer):
         return losses
 
     def train_step(self, batch):
-        # print(batch['diffused']['mol_diffuse_time'])
-        # print(batch['diffused']['mol_diffuse_perturb_score'])
-        # print(batch['diffused']['mol_diffuse_perturb_score'].shape)
-        # print(batch['net_input']['mol_holo_coord'].shape)
         output, padding_mask = self.nets(batch)
-        print(output['tr-rotation'].shape)
-        print(output['perturbation'].shape)
         loss = sum(self.loss(output, padding_mask, batch, norm_weighted=self.config.TRAIN['norm_weighted']))
         return loss
 
