@@ -280,7 +280,7 @@ class GaussianSampler(BaseSampler):
                  T:int = 5000,
                  seed = None,
                  time_sync:bool = True,
-                 sde_format = "VP",
+                 sde_format = "VE",
                  return_negative_score = False,
                  schedular:Callable = None):
         super().__init__(T, seed, sde_format, return_negative_score, schedular)
@@ -303,7 +303,7 @@ class GaussianSampler(BaseSampler):
     def score(self,eps,sampled):
         return eps
 
-    def sample_given_t(self,x:Union[torch.tensor,np.ndarray],t:Union[int,torch.Tensor,np.ndarray]):
+    def sample_given_t_vp(self,x:Union[torch.tensor,np.ndarray],t:Union[int,torch.Tensor,np.ndarray]):
         """
         Input:
             x: Union[torch.tensor,np.ndarray], the input coordinates of the atoms, shape (N,3).
@@ -325,7 +325,35 @@ class GaussianSampler(BaseSampler):
         score = -self.score(e,x_t) if self.return_negative_score else self.score(e,x_t)
         norm = np.squeeze(np.sqrt(variance),axis = -1)
         return torch.tensor(x_t), score, norm
-    
+
+    def sample_given_t_ve(self,x:Union[torch.tensor,np.ndarray],t:Union[int,torch.Tensor,np.ndarray]):
+        """
+        Input:
+            x: Union[torch.tensor,np.ndarray], the input coordinates of the atoms, shape (N,3).
+            t: Union[int,torch.Tensor,np.ndarray], the time step, can be set differently for each atom.
+        """
+        x = try_to_numpy(x)
+        B,N,D = x.shape
+        if isinstance(t,int):
+            t = t*np.ones((B,N),dtype = int)
+        if t.ndim == 1:
+            t = t[:,None]*np.ones((B,N),dtype = int)
+        e = s_normal(B,N,D)
+        variance = 1 - self.alphas[t]
+        variance = variance[...,None]
+        x_t =  x + np.sqrt(variance) * e
+        score = -self.score(e,x_t) if self.return_negative_score else self.score(e,x_t)
+        norm = np.squeeze(np.sqrt(variance),axis = -1)
+        return torch.tensor(x_t), score, norm
+
+    def sample_given_t(self,x:Union[torch.tensor,np.ndarray],t:Union[int,torch.Tensor,np.ndarray]):
+        if self.sde_format == "VP":
+            return self.sample_given_t_vp(x,t)
+        elif self.sde_format == "VE":
+            return self.sample_given_t_ve(x,t)
+        else:
+            raise ValueError("The SDE type should be either 'VP' or 'VE'")
+
     def sample(self, x:torch.tensor):
         x = try_to_tensor(x)
         if x.dim() != 3:
