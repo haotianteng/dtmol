@@ -1,7 +1,7 @@
 import torch
 import logging
 from torch import nn
-from dtmol.utils.data import Dictionary
+from dtmol.utils.dictionary import Dictionary
 from dtmol.block import GaussianLayer, TransformerEncoderWithPair, MaskLMHead, NonLinearHead, DistanceHead, ClassificationHead
 logger = logging.getLogger(__name__)
 
