@@ -17,7 +17,7 @@ def alpha_series(noise: np.ndarray):
 
 def try_to_numpy(x:Union[torch.Tensor,np.ndarray]):
     try: 
-        return x.numpy()
+        return x.cpu().detach().numpy()
     except:
         return x
     
@@ -26,6 +26,20 @@ def try_to_tensor(x:Union[torch.Tensor,np.ndarray]):
         return x.to(torch.float32)
     else:
         return torch.tensor(x,dtype = torch.float32)
+
+def is_int(x):
+    return isinstance(x,int) or isinstance(x,np.integer)
+
+def is_scalar(x):
+    return is_int(x) or x.ndim == 0    
+
+def expand_as(x,y):
+    B,N,D = y.shape
+    if is_scalar(x):
+        x = x*np.ones((B,N,D),dtype = int)
+    if x.ndim == 1:
+        x = x[:,None,None]*np.ones((B,N,D),dtype = int)
+    return x
 
 def s_normal(*shape):
     return np.random.normal(0,1,shape)
@@ -249,6 +263,8 @@ class BaseSampler(object):
     @staticmethod
     def _ve_kernel(x_t, score, sigma_t, sigma_t_1, with_noise = True):
         var = (sigma_t**2 - sigma_t_1**2)
+        if score.ndim == 3 and var.ndim == 2:
+            var = var[...,None]
         x_rev = x_t + var * score
         if with_noise:
             x_rev = x_rev + np.sqrt(var) * s_normal(*x_t.shape)
@@ -259,7 +275,8 @@ class BaseSampler(object):
                    t:int,
                    score:torch.tensor,
                    stochastic:bool = False):
-        
+        x = try_to_numpy(x)
+        score = try_to_numpy(score)
         if self.sde_format == "VP":
             return self.reverse_vp_dt(x = x,
                                       t = t,
@@ -293,7 +310,7 @@ class GaussianSampler(BaseSampler):
                x_0:np.ndarray):
         """Return the log probability of the Gaussian kernel: log p_t(x_t | x_0).
         """
-        if isinstance(t,int):
+        if is_int(t):
             t = [t] * len(x_t)
         alpha_t = self.alphas[t]
         mu = np.sqrt(alpha_t)*x_0
@@ -311,9 +328,9 @@ class GaussianSampler(BaseSampler):
         """
         x = try_to_numpy(x)
         B,N,D = x.shape
-        x_c = x.mean(axis = 1)
-        x = x - x_c[:,None,:]
-        if isinstance(t,int):
+        x_c = x.mean(axis = 1,keepdims = True)
+        x = x - x_c
+        if is_int(t):
             t = t*np.ones((B,N),dtype = int)
         if t.ndim == 1:
             t = t[:,None]*np.ones((B,N),dtype = int)
@@ -321,7 +338,7 @@ class GaussianSampler(BaseSampler):
         variance = 1 - self.alphas[t]
         variance = variance[...,None]
         scale = np.sqrt(self.alphas[t])[...,None]
-        x_t =  scale * x + np.sqrt(variance) * e + x_c[:,None,:]
+        x_t =  scale * x + np.sqrt(variance) * e + x_c
         score = -self.score(e,x_t) if self.return_negative_score else self.score(e,x_t)
         norm = np.squeeze(np.sqrt(variance),axis = -1)
         return torch.tensor(x_t), score, norm
@@ -334,7 +351,7 @@ class GaussianSampler(BaseSampler):
         """
         x = try_to_numpy(x)
         B,N,D = x.shape
-        if isinstance(t,int):
+        if is_int(t):
             t = t*np.ones((B,N),dtype = int)
         if t.ndim == 1:
             t = t[:,None]*np.ones((B,N),dtype = int)
@@ -372,10 +389,12 @@ class GaussianSampler(BaseSampler):
                 stochastic:bool = False):
         x = try_to_numpy(x)
         B,N,D = x.shape
-        if isinstance(t,int) or t.ndim == 0:
-            t = np.asarray([t] * B)
-        beta_t = self.noise[t][:,None]
-        alpha_t = self.alphas[t][:,None]
+        if is_int(t):
+            t = t*np.ones((B,N),dtype = int)
+        if t.ndim == 1:
+            t = t[:,None]*np.ones((B,N),dtype = int)
+        beta_t = self.noise[t][...,None]
+        alpha_t = self.alphas[t][...,None]
         if stochastic:
             e = s_normal(B,N,D)
         else:
@@ -383,6 +402,28 @@ class GaussianSampler(BaseSampler):
         score = score if self.return_negative_score else -score
         # apply reverse perturbation to the coordinates
         x_rev = self._vp_kernel(x,score,beta_t,alpha_t,with_noise = stochastic)
+        return x_rev
+
+    def reverse_ve_dt(self,
+                      x:torch.tensor,
+                      t:int,
+                      score:torch.tensor,
+                      stochastic:bool = False):
+        x = try_to_numpy(x)
+        B,N,D = x.shape
+        if is_int(t):
+            t = t*np.ones((B,N),dtype = int)
+        if t.ndim == 1:
+            t = t[:,None]*np.ones((B,N),dtype = int)
+        sigma_t = self.sigma[t][...,None]
+        sigma_t_1 = self.sigma[np.maximum(t-1,0)][...,None]
+        sigma_t_1[t==0] = 0
+        if stochastic:
+            e = s_normal(B,N,D)
+        else:
+            e = 0
+        score = score if self.return_negative_score else -score
+        x_rev = self._ve_kernel(x,score,sigma_t,sigma_t_1,with_noise = stochastic)
         return x_rev
 
 class RotationSampler(BaseSampler):
@@ -415,7 +456,7 @@ class RotationSampler(BaseSampler):
         t = try_to_numpy(t)
         b,N,D = x.shape
         assert D==3, "Rotation sampler works only for 3D coordinates"
-        if isinstance(t,int):
+        if is_int(t):
             t = np.asarray([t] * b)
         variance = 1 - self.alphas[t]
         eps = np.sqrt(variance)
@@ -425,7 +466,7 @@ class RotationSampler(BaseSampler):
         norm = score_norm(eps)[...,None]
         with torch.no_grad():
             Rot = torch.Tensor(Rotation.from_rotvec(eular_vec).as_matrix())
-            x_c = x.mean(axis = 1)
+            x_c = x.mean(axis = 1,keepdims = True)
             x_t = torch.einsum('ijk,ilk->ilj',Rot,(x - x_c))+ x_c
         return x_t, score, norm
     
@@ -457,16 +498,17 @@ class RotationSampler(BaseSampler):
         B,N,D = x.shape
         self.dimensional_check(x,score)
         assert D==3, "Rotation sampler works only for 3D coordinates"
-        if isinstance(t,int) or t.ndim == 0:
+        if is_int(t):
             t = np.asarray([t] * B)
-        sigma_t = self.sigma[t][:,None]
-        sigma_t_1 = self.sigma[np.maximum(t-1,0)][:,None]
+        assert t.ndim == 1, "The time step should be a 1D array with shaep (B)"
+        sigma_t = self.sigma[t][...,None] # (B,1)
+        sigma_t_1 = self.sigma[np.maximum(t-1,0)][...,None] # (B,1)
         sigma_t_1[t==0] = 0
         score = score if self.return_negative_score else -score
         r_t = self._ve_kernel(np.zeros((B,D)),score,sigma_t,sigma_t_1,with_noise = stochastic)
         with torch.no_grad():
             Rot = torch.Tensor(Rotation.from_rotvec(r_t).as_matrix())
-            x_c = x.mean(axis = 1)
+            x_c = x.mean(axis = 1,keepdims = True)
             x_rev = torch.einsum('ijk,ilk->ilj',Rot,(x - x_c)) + x_c
         return x_rev
     
@@ -496,7 +538,7 @@ class TranslationSampler(BaseSampler):
                x_0:np.ndarray):
         """Return the log probability of the Gaussian kernel: log p_t(x_t | x_0).
         """
-        if isinstance(t,int):
+        if is_int(t):
             t = [t] * len(x_t)
         alpha_t = self.alphas[t]
         mu = np.sqrt(alpha_t)*x_0
@@ -514,16 +556,16 @@ class TranslationSampler(BaseSampler):
         """
         x = try_to_numpy(x)
         B,N,D = x.shape
-        if isinstance(t,int):
+        if is_int(t):
             t = [t] * B
         e = s_normal(len(x),D)
         variance = 1 - self.alphas[t]
-        variance = variance[:,None]
-        scale = np.sqrt(self.alphas[t])[:,None]
+        variance = variance[...,None]
+        scale = np.sqrt(self.alphas[t])[...,None]
         with torch.no_grad():
             x_c = x.mean(axis = 1)
             x_c_diff =  scale * x_c + np.sqrt(variance) * e
-            x_t = x - x_c[:,None,:] + x_c_diff[:,None,:]
+            x_t = x - x_c + x_c_diff
             score = self.score(e,x_t)
             score = -score if self.return_negative_score else score
         return torch.tensor(x_t), score, np.sqrt(variance)
@@ -553,12 +595,12 @@ class TranslationSampler(BaseSampler):
         B,N,D = x.shape
         self.dimensional_check(x,score)
         assert len(score.shape) == 2, "The score should be a system score with two dimensions (B,3)"
-        if isinstance(t,int) or t.ndim == 0:
-            t = [int(t)] * B
-        beta_t = self.noise[t][:,None]
-        alpha_t = self.alphas[t][:,None]
-        x_c = x.mean(axis = 1)
-        score = score if self.return_negative_score else -score
+        if is_int(t):
+            t = np.asarray([t] * B)
+        beta_t = self.noise[t][...,None] # (B,1)
+        alpha_t = self.alphas[t][...,None] # (B,1)
+        x_c = x.mean(axis = 1) # (B,D)
+        score = score if self.return_negative_score else -score # (B,D)
         x_c_rev = self._vp_kernel(x_c,score,beta_t,alpha_t,with_noise = stochastic)
         x_t = x - x_c[:,None,:] + x_c_rev[:,None,:]
         return torch.tensor(x_t)
@@ -571,8 +613,8 @@ class TranslationSampler(BaseSampler):
         x = try_to_numpy(x)
         B,N,D = x.shape
         self.dimensional_check(x,score)
-        if isinstance(t,int) or t.ndim == 0:
-            t = [int(t)] * B
+        if is_int(t):
+            t = np.asarray([t] * B)
         sigma_t = self.sigma[t][:,None]
         sigma_t_1 = self.sigma[np.maximum(t-1,0)][:,None]
         sigma_t_1[t==0] = 0
@@ -580,7 +622,7 @@ class TranslationSampler(BaseSampler):
         score = score if self.return_negative_score else -score
         x_c = x.mean(axis = 1)
         x_c_diff = self._ve_kernel(np.zeros_like(x_c),score,sigma_t,sigma_t_1,with_noise = stochastic)
-        x_t = x + x_c_diff[:,None,:]
+        x_t = x + x_c_diff
         return torch.tensor(x_t)    
 
 class ChainSampler(BaseSampler):
@@ -687,7 +729,7 @@ if __name__ == "__main__":
     x_compose, c_score, c_norm,c_ts = composed.sample(x_0)
 
     # Reverse the diffusion
-    reverse_T = 500
+    reverse_T = 20
     rot_sampler.set_T(reverse_T)
     g_sampler.set_T(reverse_T)
     tr_sampler.set_T(reverse_T)

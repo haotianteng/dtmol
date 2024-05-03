@@ -184,8 +184,8 @@ if __name__ == "__main__":
     biding_ds_path = "/data/unimol_data/protein_ligand_binding_pose_prediction/"
     test_config = {
         "seed": 0,
-        "max_seq_len": 200,
-        "max_pocket_atoms": 256,
+        "max_seq_len": 500,
+        "max_pocket_atoms": 500,
     }
     pocket_dataset = CrossDataset(test_config,ligand_dict,protein_dict)
     pocket_dataset.load_lmdb(biding_ds_path,"train")
@@ -206,21 +206,29 @@ if __name__ == "__main__":
     test_decoder_args = TestArgs()
     decoder = Decoder(test_decoder_args, ligand_dict)
 
-    dataset = pocket_dataset['train']
-    def get_mole_input(dataset,i):
-        return {"src_tokens": dataset[i]['net_input.mol_tokens'].unsqueeze(0),
-                "src_distance": dataset[i]['net_input.mol_holo_distance'].unsqueeze(0),
-                "src_coord": dataset[i]['net_input.mol_holo_coord'].unsqueeze(0),
-                "src_edge_type": dataset[i]['net_input.mol_edge_type'].unsqueeze(0),
+    dataset = pocket_dataset
+    def get_mole_input(batch):
+        return {"src_tokens": batch['net_input']['mol_tokens'],
+                "src_distance": batch['net_input']['mol_holo_distance'],
+                "src_coord": batch['net_input']['mol_holo_coord'],
+                "src_edge_type": batch['net_input']['mol_edge_type'],
         }
-    def get_pocket_input(dataset,i):
-        return {"src_tokens": dataset[i]['net_input.pocket_tokens'].unsqueeze(0),
-                "src_distance": dataset[i]['net_input.pocket_distance'].unsqueeze(0),
-                "src_coord": dataset[i]['net_input.pocket_holo_coord'].unsqueeze(0),
-                "src_edge_type": dataset[i]['net_input.pocket_edge_type'].unsqueeze(0),
+    def get_pocket_input(batch):
+        return {"src_tokens": batch['net_input']['pocket_tokens'],
+                "src_distance": batch['net_input']['pocket_distance'],
+                "src_coord": batch['net_input']['pocket_holo_coord'],
+                "src_edge_type": batch['net_input']['pocket_edge_type'],
         }
-    mole_input = get_mole_input(dataset,0)
-    pocket_input = get_pocket_input(dataset,0)
+    from dtmol.dtmol_input import get_dataloader
+    loader_dict = get_dataloader(dataset,
+                                 batch_size = 5,
+                                 device = 'cpu',
+                                 split = ['train'],
+                                 distributed= False)
+    batch = next(iter(loader_dict['train']))
+    trian_loader = loader_dict['train']
+    mole_input = get_mole_input(batch)
+    pocket_input = get_pocket_input(batch)
     (mole_embd, 
      mole_attn,
      mole_padding
@@ -239,7 +247,7 @@ if __name__ == "__main__":
             pocket_padding,
             mole_attn, 
             pocket_attn, 
-            dataset[0]['net_input.cross_distance'].unsqueeze(0),
-            dataset[0]['net_input.cross_edge_type'].unsqueeze(0),
+            batch['net_input']['cross_distance'],
+            batch['net_input']['cross_edge_type'],
             diffusion_heads = ["tr-rotation","perturbation"],
     )

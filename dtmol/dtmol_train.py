@@ -22,6 +22,7 @@ from dtmol.encoder import UniMolEncoder
 from dtmol.decoder import Decoder
 from dtmol.dtmol_model import DummyModelConfig
 from dtmol.diffusion import RotationSampler, GaussianSampler
+from dtmol.utils.sampling import reverse_sampling, rmsd
 from torch.utils.data import DataLoader
 from torch.nn.parallel import DistributedDataParallel as DDP
 torch.autograd.set_detect_anomaly(True)
@@ -38,13 +39,14 @@ class DiffusionTrainer(Trainer):
         self.sampler = sampler
 
     def train(self, epoches: int, optimizer, save_every_n_steps: int = 100,
-              valid_every_n_steps: int = 100, save_folder: str = None):
+              valid_every_n_steps: int = 100, eval_every_n_epoches: int = 5 ,save_folder: str = None):
         self.save_folder = save_folder
         self._save_config()
         for epoch_i in range(epoches):
             if self.distributed:
                 self.train_ds.dataloader.sampler.set_epoch(epoch_i)
                 self.eval_ds.dataloader.sampler.set_epoch(epoch_i)
+            ### Training
             for i_step, batch in enumerate(self.train_ds):
                 loss = self.train_step(batch)
                 if torch.isnan(loss):
@@ -74,7 +76,34 @@ class DiffusionTrainer(Trainer):
                                         "train_loss": loss, 
                                         "global_step": self.global_step})
                 self.global_step += 1
-
+            
+            ### Evaluation
+            if epoch_i % eval_every_n_epoches == 0:
+                if self._on_main_rank():
+                    msg = f"Epoch {epoch_i}: Evaluating the model"
+                    self.logger.info(msg)
+                mole_rmsds,prot_rmsds = [],[]
+                for eval_i,eval_batch in enumerate(self.eval_ds):
+                    mole_rmsd,prot_rmsd = self.eval_step(eval_batch)
+                    mole_rmsd,prot_rmsd = mole_rmsd.item(),prot_rmsd.item()
+                    mole_rmsds.append(mole_rmsd)
+                    prot_rmsds.append(prot_rmsd)
+                    msg = f"Eval {eval_i}/{len(self.eval_ds)}: Mole RMSD {mole_rmsd:.4f}, Prot RMSD {prot_rmsd:.4f}"
+                    self.logger.info(msg)
+                mole_rmsd = np.mean(mole_rmsds)
+                prot_rmsd = np.mean(prot_rmsds)
+                if self._on_main_rank():
+                    msg = f"Epoch {epoch_i}: mean mole RMSD {mole_rmsd:.4f}, mean prot RMSD {prot_rmsd:.4f}"
+                    self.logger.info(msg)
+                    if self.use_wandb:
+                        wandb.log({"mean mole_rmsd": mole_rmsd,
+                                   "mean prot_rmsd": prot_rmsd,
+                                   "mole_rmsd": wandb.Histogram(np.array(mole_rmsds)),
+                                   "prot_rmsd": wandb.Histogram(np.array(prot_rmsds)),
+                                   "epoch": epoch_i,
+                                   "global_step": self.global_step})
+                        
+                        
     def loss(self, output, padding_mask, batch,norm_weighted = False):
         if self.distributed:
             losses = self.nets.module.diffusion_loss(output, 
@@ -88,6 +117,10 @@ class DiffusionTrainer(Trainer):
                                               norm_weighted=norm_weighted)
         return losses
 
+    def rmsd(self, coord, label, mole_padding, prot_padding):
+        rmsd_mole, rmsd_prot = rmsd(coord, label, mole_padding, prot_padding)
+        return rmsd_mole, rmsd_prot
+    
     def train_step(self, batch):
         output, padding_mask = self.nets(batch)
         loss = sum(self.loss(output, padding_mask, batch, norm_weighted=self.config.TRAIN['norm_weighted']))
@@ -103,9 +136,17 @@ class DiffusionTrainer(Trainer):
 
     def eval_step(self, batch):
         with torch.no_grad():
-            output, padding_mask = self.nets(batch)
-            loss = sum(self.loss(output, padding_mask, batch))
-        return loss
+            if self.distributed:
+                coord,mole_padding,prot_padding = self.nets.module.eval_once(batch, self.sampler)
+            else:
+                coord,mole_padding,prot_padding = self.nets.eval_once(batch, self.sampler)
+            label = self.get_label_coord(batch)
+            mole_rmsd,prot_rmsd = self.rmsd(coord, label, mole_padding, prot_padding)
+        return mole_rmsd, prot_rmsd
+    
+    def get_label_coord(self, batch):
+        label = torch.cat([batch['net_input']['mol_holo_coord'],batch['net_input']['pocket_holo_coord']],dim=1)
+        return label
 
     def record_config(self,config):
         if self.use_wandb:

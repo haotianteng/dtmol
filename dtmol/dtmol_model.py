@@ -2,6 +2,7 @@ import torch
 from torch import nn
 from dtmol.decoder import Decoder
 from dtmol.encoder import UniMolEncoder
+from dtmol.utils.sampling import reverse_sampling
 from dtmol.utils.dictionary import Dictionary
 
 class DummyModelConfig(object):
@@ -71,6 +72,46 @@ class ScoreNetwork(nn.ModuleDict):
                 "src_coord": batch['net_input']['mol_src_coord'],
                 "src_edge_type": batch['net_input']['mol_edge_type']}
 
+    def eval_once(self,batch,rev_sampler,T = 20):
+        mole_sampler = rev_sampler['molecule']
+        prot_sampler = rev_sampler['protein']
+        orig_T = mole_sampler.T
+        mole_sampler.set_T(T)
+        prot_sampler.set_T(T)
+        mol_coord = batch['net_input']['mol_src_coord']
+        pocket_coord = batch['net_input']['pocket_holo_coord']
+        n_mole = mol_coord.size(1)
+        coord = torch.cat([mol_coord,pocket_coord],dim=1)
+        ### debugging code ###
+        # orig_coord = coord.clone()
+        ######
+
+        for i in range(T-1,-1,-1):
+            score_dict, mole_padding, prot_padding = self.forward(batch, training=False)
+            score = torch.cat([score_dict['tr-rotation'].view(-1,2,3),score_dict['perturbation']],dim=1)
+            coord,distance = reverse_sampling(coord, 
+                                              score, 
+                                              mole_sampler=mole_sampler,
+                                              prot_sampler=prot_sampler, 
+                                              mole_padding=mole_padding, 
+                                              prot_padding=prot_padding, 
+                                              t=i)
+            batch['net_input']['mol_src_coord'] = coord[:,:n_mole,:]
+            batch['net_input']['src_coord'] = coord[:,n_mole:,:]
+            batch['net_input']['mol_src_distance'] = distance[:,:n_mole,:n_mole]
+            batch['net_input']['pocket_distance'] = distance[:,n_mole:,n_mole:]
+            batch['net_input']['cross_distance'] = distance[:,:n_mole,n_mole:]
+            ### Dubbing code 
+            # import time
+            # current_time = time.strftime("%Y%m%d_%H%M%S")
+            # mole_diff = torch.norm(mol_coord.cpu()-batch['net_input']['mol_src_coord'].cpu())
+            # prot_diff = torch.norm(pocket_coord.cpu()-batch['net_input']['src_coord'].cpu())
+            # print(f"Time: {current_time}, Timestep: {i}, Molecule diff: {mole_diff}, Protein diff: {prot_diff}")
+            ###
+        mole_sampler.set_T(orig_T)
+        prot_sampler.set_T(orig_T)
+        return coord, mole_padding, prot_padding
+
     def forward(self,batch,training = True):
         if training:
             mole_input = self._get_mole_diffused(batch)
@@ -83,6 +124,10 @@ class ScoreNetwork(nn.ModuleDict):
         mole_time = batch['diffused']['mol_diffuse_time']
         pocket_time = batch['diffused']['pocket_diffuse_time']
         assert torch.equal(mole_time, pocket_time), "Molecule and pocket diffusion time should be the same."
+        if training:
+            cross_dist, cross_edges = batch['diffused']['cross_distance'], batch['diffused']['cross_edge_type']
+        else:
+            cross_dist, cross_edges = batch['net_input']['cross_distance'], batch['net_input']['cross_edge_type']
         output, padding_mask = self['decoder'](embd_molecule = mole_embd, 
                                                embd_protein = pocket_embd,
                                                timesteps = mole_time.squeeze(1), 
@@ -90,32 +135,34 @@ class ScoreNetwork(nn.ModuleDict):
                                                padding_protein = pocket_padding,
                                                attn_mole = mole_attn, 
                                                attn_protein = pocket_attn, 
-                                               cross_distance = batch['diffused']['cross_distance'],
-                                               cross_edges = batch['diffused']['cross_edge_type'],
+                                               cross_distance = cross_dist,
+                                               cross_edges = cross_edges,
                                                diffusion_heads=["tr-rotation", "perturbation"])
         
-        ##% debugging code for NaN loss
-        decoder_inpt = {"mole_embd":mole_embd, 
-                        "pocket_embd":pocket_embd,
-                        "mole_time":mole_time,
-                        "mole_attn":mole_attn,
-                        "pocket_attn":pocket_attn,
-                        "cross_distance":batch['diffused']['cross_distance'],
-                        "cross_edges":batch['diffused']['cross_edge_type']}
+        # ##% debugging code for NaN loss
+        # decoder_inpt = {"mole_embd":mole_embd, 
+        #                 "pocket_embd":pocket_embd,
+        #                 "mole_time":mole_time,
+        #                 "mole_attn":mole_attn,
+        #                 "pocket_attn":pocket_attn,
+        #                 "cross_distance":cross_dist,
+        #                 "cross_edges":cross_edges}
         
-        for key, input in decoder_inpt.items():
-            if (input is None) or (torch.isnan(input).any()):
-                print("NaN detected in decoder input")
-                print(f"{key} input:", input)
-                raise
+        # for key, input in decoder_inpt.items():
+        #     if (input is None) or (torch.isnan(input).any()):
+        #         print("NaN detected in decoder input")
+        #         print(f"{key} input:", input)
+        #         raise
 
-        if torch.isnan(output['tr-rotation']).any() or torch.isnan(output['perturbation']).any():
-            print("NaN detected in tr-rotation output")
-            print("output['tr-rotation']:", output['tr-rotation'])
-            raise
-        ###
-
-        return output, padding_mask
+        # if torch.isnan(output['tr-rotation']).any() or torch.isnan(output['perturbation']).any():
+        #     print("NaN detected in tr-rotation output")
+        #     print("output['tr-rotation']:", output['tr-rotation'])
+        #     raise
+        # ###
+        if training:
+            return output, padding_mask
+        else:
+            return output, mole_padding, pocket_padding
 
     def diffusion_loss(self, output, padding_mask, diffused_dict, atom_diffusion=False, norm_weighted=False):
         losses = []
