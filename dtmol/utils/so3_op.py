@@ -175,4 +175,13 @@ if __name__ == "__main__":
     plot_angle_distribution_polar(sampled, np.array([0, 0, 1]))
     plt.show()
 
-    #plot the distribution of 
+    #plot the distribution of scores
+    scores_eps = []
+    es = []
+    for eps in range(1,100):
+        es.append(eps)
+        score = score_vec(eps, sample_vec(eps))/score_norm(2)
+        scores_eps.append(np.linalg.norm(score))
+    fig = plt.figure()
+    plt.plot(es, scores_eps)
+    

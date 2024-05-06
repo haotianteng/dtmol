@@ -47,6 +47,17 @@ class DiffusionTrainer(Trainer):
                 self.train_ds.dataloader.sampler.set_epoch(epoch_i)
                 self.eval_ds.dataloader.sampler.set_epoch(epoch_i)
             ### Training
+            if self.config.TRAIN['warmup'] is not None and epoch_i >= self.config.TRAIN['warmup']:
+                if self.distributed:
+                    for param in self.nets.module['ligand_encoder'].parameters():
+                        param.requires_grad = True
+                    for param in self.nets.module['protein_encoder'].parameters():
+                        param.requires_grad = True
+                else:
+                    for param in self.nets['ligand_encoder'].parameters():
+                        param.requires_grad = True
+                    for param in self.nets['protein_encoder'].parameters():
+                        param.requires_grad = True
             for i_step, batch in enumerate(self.train_ds):
                 loss = self.train_step(batch)
                 if torch.isnan(loss):
@@ -103,7 +114,7 @@ class DiffusionTrainer(Trainer):
                                    "epoch": epoch_i,
                                    "global_step": self.global_step})
                         
-                        
+
     def loss(self, output, padding_mask, batch,norm_weighted = False):
         if self.distributed:
             losses = self.nets.module.diffusion_loss(output, 
@@ -159,9 +170,15 @@ def worker(idx,world_size,args):
         dist.init_process_group(backend="nccl", rank=idx, world_size=world_size)
     package_path = dtmol.__path__[0]
     date = time.strftime("%Y%m%d")
-    model_folder = os.path.join(package_path, f"models/bindingpose_{date}")
     model_name = args['model_name']
-    model_folder = os.path.join(package_path, f"models/{model_name}_{date}")
+    if args['train']['retrain'] is not None:
+        model_folder = args['train']['retrain']
+        if idx == 0:
+            print(f"Retrain the model from {model_folder}")
+    else:
+        model_folder = os.path.join(package_path, f"models/{model_name}_{date}")
+        if idx == 0:
+            print(f"Train the model from scratch, save to {model_folder}")
     ds_path = args['data_f']
 
     #create the model folder
@@ -172,19 +189,31 @@ def worker(idx,world_size,args):
     
     ##% Buildt the model
     pretrain_f = os.path.join(package_path, "models/pretrain")
+    dropout = args['train']['dropout']
     config.MODEL={'pretrain_folder': pretrain_f,
                   'load_pretrain': True,
+                  'encoder': {'dropout':dropout,
+                              'emb_dropout':dropout,
+                              'attention_dropout':dropout,
+                              'activation_dropout':dropout,
+                              'pooler_dropout':dropout,
+                  },
                   'decoder': {'layers':7,
                               'embed_dim':512,
                               'ffn_embed_dim':2048,
                               'attention_heads':64}
                               }
     net = ScoreNetwork(config.MODEL)
-    if args['train']['fine_tune_pretrain']:
+    if args['train']['fine_tune_pretrain'] and args['train']['warmup'] is None:
         for param in net['ligand_encoder'].parameters():
             param.requires_grad = True
         for param in net['protein_encoder'].parameters():
             param.requires_grad = True
+    else:
+        for param in net['ligand_encoder'].parameters():
+            param.requires_grad = False
+        for param in net['protein_encoder'].parameters():
+            param.requires_grad = False
     net.to(idx)
     if distributed:
         net = DDP(net,device_ids=[idx],find_unused_parameters=True)
@@ -210,6 +239,8 @@ def worker(idx,world_size,args):
                                config = config,
                                device = idx,
                                distributed = distributed)
+    if args['train']['retrain']:
+        trainer.load(model_folder)
     optimizer = torch.optim.Adam(net.parameters(),lr = train_config['learning_rate'])
     trainer.train(epoches=train_config['epoches'],
                   optimizer=optimizer,
@@ -225,6 +256,15 @@ def main(args):
                  join=True)
     else:
         worker(0,world_size,args)
+
+def print_args(args,level = 0):
+    prefix = "\t"*level
+    for key in args:
+        if isinstance(args[key],dict):
+            print(f"{prefix}{key}:")
+            print_args(args[key],level+1)
+        else:
+            print(f"{prefix}{key}: {args[key]}")
 
 if __name__ == "__main__":  
     os.environ["MASTER_ADDR"] = "localhost"
@@ -242,6 +282,9 @@ if __name__ == "__main__":
             'fine_tune_pretrain': False,
             'norm_weighted': False, # if the perturbation loss is weighted by normalization factor
             'use_wandb': True,
+            'retrain': None,
+            'dropout': 0.0,
+            'warmup': None,
         }
     }
     parser = argparse.ArgumentParser()
@@ -250,9 +293,14 @@ if __name__ == "__main__":
     parser.add_argument("--batch_size",type=int,default=None)
     parser.add_argument("--model_name",type=str,default=None)
     parser.add_argument("--fine_tune_pretrain",action='store_true',dest = 'fine_tune_pretrain')
+    parser.add_argument("--warmup",type = int,default=None, 
+                        help="This setting will override the fine_tune_pretrain setting, will fine tune the encoder after warmup epochs")
     parser.add_argument("--no_wandb",action='store_false',dest='use_wandb')
+    parser.add_argument("--retrain",type = str,default=None)
+    parser.add_argument("--dropout",type=float,default=0.0)
+    parser.add_argument("--learning_rate",type=float,default=None)
+    parser.add_argument("--epoches",type=int,default=None)
     cmd_args = vars(parser.parse_args(sys.argv[1:]))
-    print(cmd_args)
     #update the args with the parsed args if parser is not None
     for key in cmd_args:
         if cmd_args[key] is not None:
@@ -263,5 +311,8 @@ if __name__ == "__main__":
             else:
                 print('Warning: key {key} is not found in the args, will create a new key in the base-level of args.')
                 args[key] = cmd_args[key]
-    print(args)
+    #print the args in a nice format
+    print("#"*20+"Arguments"+"#"*20)
+    print_args(args)
+    print("#"*49)
     main(args)

@@ -158,7 +158,7 @@ class Trainer(object):
     def save(self):
         if self._on_main_rank():
             ckpt_file = os.path.join(self.save_folder,'checkpoint')
-            current_ckpt = 'ckpt-'+str(self.global_step)
+            current_ckpt = 'ckpt-'+str(self.global_step)+'.pt'
             model_file = os.path.join(self.save_folder,current_ckpt)
             self.save_list.append(current_ckpt)
             if not os.path.isdir(self.save_folder):
@@ -195,16 +195,20 @@ class Trainer(object):
         with open(ckpt_file,'r') as f:
             latest_ckpt = f.readline().strip().split(':')[1]
             if update_global_step:
-                self.global_step = int(latest_ckpt.split('-')[1])
+                if latest_ckpt.endswith('.pt'):
+                    self.global_step = int(latest_ckpt[:-3].split('-')[1])
+                else:
+                    self.global_step = int(latest_ckpt.split('-')[1])  
         ckpt = torch.load(os.path.join(save_folder,latest_ckpt),map_location=self.device)
+        nets = self.nets if not self.distributed else self.nets.module
         for key,net in ckpt.items():
-            if key in self.nets.keys():
+            if key in nets.keys():
                 try:
-                    self.nets[key].load_state_dict(net,strict = True)
+                    nets[key].load_state_dict(net,strict = True)
                 except RuntimeError:
                     print(f"Exact loading {key} failed, try load loosely.")
-                    self.nets[key].load_state_dict(net,strict = False)
-                self.nets[key].to(self.device)
+                    nets[key].load_state_dict(net,strict = False)
+                nets[key].to(self.device)
             else:
                 msg = "%s net is defined in the checkpoint but is not imported because it's not defined in the model."%(key)
                 self._alert(msg, level = 'warning')
