@@ -188,9 +188,7 @@ def worker(idx,world_size,args):
     os.makedirs(model_folder, exist_ok=True)
     
     ##% Buildt the model
-    pretrain_f = os.path.join(package_path, "models/pretrain")
-    dropout = args['train']['dropout']
-    config.MODEL={'pretrain_folder': pretrain_f,
+    MODEL_S = {'pretrain_folder': pretrain_f,
                   'load_pretrain': True,
                   'encoder': {'dropout':dropout,
                               'emb_dropout':dropout,
@@ -198,11 +196,47 @@ def worker(idx,world_size,args):
                               'activation_dropout':dropout,
                               'pooler_dropout':dropout,
                   },
-                  'decoder': {'layers':7,
-                              'embed_dim':512,
-                              'ffn_embed_dim':2048,
-                              'attention_heads':64}
+                  'decoder': {'layers':8,
+                              'embed_dim':256,
+                              'ffn_embed_dim':1024,
+                              'attention_heads':32}
                               }
+
+    MODEL_L = {'pretrain_folder': pretrain_f,
+                    'load_pretrain': True,
+                    'encoder': {'dropout':dropout,
+                                'emb_dropout':dropout,
+                                'attention_dropout':dropout,
+                                'activation_dropout':dropout,
+                                'pooler_dropout':dropout,
+                    },
+                    'decoder': {'layers':16,
+                                'embed_dim':512,
+                                'ffn_embed_dim':2048,
+                                'attention_heads':64}
+                                }
+
+    MODEL_XL = {'pretrain_folder': pretrain_f,
+                    'load_pretrain': True,
+                    'encoder': {'dropout':dropout,
+                                'emb_dropout':dropout,
+                                'attention_dropout':dropout,
+                                'activation_dropout':dropout,
+                                'pooler_dropout':dropout,
+                    },
+                    'decoder': {'layers':24,
+                                'embed_dim':768,
+                                'ffn_embed_dim':3072,
+                                'attention_heads':96}
+                                }
+    pretrain_f = os.path.join(package_path, "models/pretrain")
+    dropout = args['train']['dropout']
+    if model_name.endswith("large"):
+        config.MODEL = MODEL_L
+    elif model_name.endswith("xl"):
+        config.MODEL = MODEL_XL
+    else:
+        config.MODEL= MODEL_S
     net = ScoreNetwork(config.MODEL)
     if args['train']['fine_tune_pretrain'] and args['train']['warmup'] is None:
         for param in net['ligand_encoder'].parameters():
