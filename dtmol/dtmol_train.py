@@ -199,9 +199,9 @@ def worker(idx,world_size,args):
                               'pooler_dropout':dropout,
                   },
                   'decoder': {'layers':8,
-                              'embed_dim':256,
+                              'embed_dim':512,
                               'ffn_embed_dim':1024,
-                              'attention_heads':32}
+                              'attention_heads':64}
                               }
 
     MODEL_L = {'pretrain_folder': pretrain_f,
@@ -227,9 +227,9 @@ def worker(idx,world_size,args):
                                 'pooler_dropout':dropout,
                     },
                     'decoder': {'layers':24,
-                                'embed_dim':768,
+                                'embed_dim':512,
                                 'ffn_embed_dim':3072,
-                                'attention_heads':96}
+                                'attention_heads':64}
                                 }
     if model_name.endswith("large"):
         config.MODEL = MODEL_L
