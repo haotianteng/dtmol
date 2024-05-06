@@ -188,6 +188,8 @@ def worker(idx,world_size,args):
     os.makedirs(model_folder, exist_ok=True)
     
     ##% Buildt the model
+    pretrain_f = os.path.join(package_path, "models/pretrain")
+    dropout = args['train']['dropout']
     MODEL_S = {'pretrain_folder': pretrain_f,
                   'load_pretrain': True,
                   'encoder': {'dropout':dropout,
@@ -229,8 +231,6 @@ def worker(idx,world_size,args):
                                 'ffn_embed_dim':3072,
                                 'attention_heads':96}
                                 }
-    pretrain_f = os.path.join(package_path, "models/pretrain")
-    dropout = args['train']['dropout']
     if model_name.endswith("large"):
         config.MODEL = MODEL_L
     elif model_name.endswith("xl"):
