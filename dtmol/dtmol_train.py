@@ -199,7 +199,7 @@ def worker(idx,world_size,args):
     os.makedirs(model_folder, exist_ok=True)
     
     ##% Buildt the model
-    pretrain_f = os.path.join(package_path, "/pretrain_models")
+    pretrain_f = os.path.join(package_path, "pretrain_models")
     dropout = args['model']['dropout']
     MODEL_S = {'pretrain_folder': pretrain_f,
                   'load_pretrain': True,

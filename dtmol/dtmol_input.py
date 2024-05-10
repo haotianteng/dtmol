@@ -15,7 +15,7 @@ def load_unimol_binding_data(config,
                              perturbation_mole = True,
                              perturbation_prot = True,
                              trrot = True):
-    PRETRAIN_FOLDER = f"{dtmol.__path__[0]}/models/pretrain"
+    PRETRAIN_FOLDER = f"{dtmol.__path__[0]}/pretrain_models"
     ligand_dict = Dictionary.load(f"{PRETRAIN_FOLDER}/unimol_molecule_dict.txt")
     protein_dict = Dictionary.load(f"{PRETRAIN_FOLDER}/unimol_protein_dict.txt")
     T = 5000
