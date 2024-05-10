@@ -65,10 +65,11 @@ class NoiseSchedular(object):
     @property
     def alpha(self):
         return alpha_series(self.noise)
+
     
     @property
     def sigma(self):
-        #used in VE-SDE format
+        #used in VP-SDE format
         return np.sqrt(1 - self.alpha)
 
     def _t(self,t):
@@ -84,6 +85,16 @@ class LinearScheduler(NoiseSchedular):
 
     def __call__(self,t):
         return self.sigma_min + (self.sigma_max - self.sigma_min) * self._t(t)
+
+class LogLinearScheduler(NoiseSchedular):
+    def __init__(self,
+                 T:int,
+                 sigma_min:float = 1e-5,
+                 sigma_max:float = 0.999):
+        super().__init__(T, sigma_min, sigma_max)
+    
+    def __call__(self,t):
+        return self.sigma_min * (self.sigma_max/self.sigma_min)**self._t(t)
 
 class CosineScheduler(NoiseSchedular):
     """Cosine noise scheduler from https://arxiv.org/pdf/2102.09672.pdf
@@ -129,7 +140,7 @@ class PolynomialScheduler(NoiseSchedular):
         return min(self.noise[t], self.sigma_max)
 
     def _alpha_bar(self,t):
-        return 1 - self._t(t)**2
+        return (1 - self._t(t)**2) * self.sigma_max
 
     @property
     def alpha(self):
@@ -209,6 +220,20 @@ class BaseSampler(object):
         self.schedular.T = new_T
         self.load_schedular(self.schedular)
 
+    def sample_given_t_ve(self,x:Union[torch.tensor,np.ndarray],t:Union[int,torch.Tensor,np.ndarray]):
+        raise NotImplementedError
+    
+    def sample_given_t_vp(self,x:Union[torch.tensor,np.ndarray],t:Union[int,torch.Tensor,np.ndarray]):
+        raise NotImplementedError
+
+    def sample_given_t(self,x:Union[torch.tensor,np.ndarray],t:Union[int,torch.Tensor,np.ndarray]):
+        if self.sde_format == "VP":
+            return self.sample_given_t_vp(x,t)
+        elif self.sde_format == "VE":
+            return self.sample_given_t_ve(x,t)
+        else:
+            raise ValueError("The SDE type should be either 'VP' or 'VE'")
+
     def conjugate(self,sampler):
         """Synchronize the time with the given sampler.
         """
@@ -224,6 +249,8 @@ class BaseSampler(object):
             self.schedular.T = self.T
             self.noise = schedular.noise
             self.alphas = schedular.alpha
+            if self.sde_format == "VP":
+                assert np.all(self.alphas>=0), "Use VP-SDE format, but found <0 alpha, please check the max sigma is setting < 1."
             self.sigma = schedular.sigma
         else:
             self.noise = np.asarray([schedular(t) for t in range(self.T)])
@@ -231,9 +258,6 @@ class BaseSampler(object):
             self.sigma = np.sqrt(1 - self.alphas)
 
     def sample(self, x):
-        raise NotImplementedError
-    
-    def sample_given_t(self,x:Union[torch.tensor,np.ndarray],t:Union[int,torch.Tensor,np.ndarray]):
         raise NotImplementedError
 
     def __call__(self,x,ts = None):
@@ -244,7 +268,7 @@ class BaseSampler(object):
             return self.sample(x)
     
     @staticmethod
-    def _vp_kernel(x_t, score, beta_t, alpha_t, with_noise = True, form = "pc"):
+    def _vp_kernel(x_t, score, beta_t, alpha_t, with_noise = True, form = "ddpm"):
         if form == 'direct':
             x_rev = (np.maximum(np.sqrt(1-beta_t),3))(beta_t*score + x_t)
             #direct form if we reverse the discrete diffusion, note this form would diverge at beta_t = 1
@@ -254,7 +278,8 @@ class BaseSampler(object):
         elif form == 'tylor2':
             x_rev = (1+0.5*beta_t + 0.75 * beta_t**2)*x_t + (beta_t + 0.5 * beta_t**2) * score
             #form by expand to the second order of direct form
-
+        elif form == 'ddpm':
+            x_rev = (1/np.sqrt(1-beta_t))*(x_t+beta_t/(np.sqrt(1-alpha_t))*score)
         if with_noise:
             x_rev = x_rev + np.sqrt(beta_t) * s_normal(*x_t.shape)
         return x_rev
@@ -290,7 +315,44 @@ class BaseSampler(object):
         else:
             raise ValueError("The SDE type should be either 'VP' or 'VE'")
 
+class DummySampler(BaseSampler):
+    def __init__(self,
+                 T:int = 5000,
+                 seed = None,
+                 sde_format = "VP",
+                 return_negative_score = False,
+                 system_wise = False,
+                 schedular:Callable = None):
+        """This is a dummy sampler that add no noise to the input coordinates.
+        """
+        super().__init__(T, seed, sde_format, return_negative_score, schedular)
+        self.system_wise = system_wise
+        np.random.seed(seed)
 
+    def sample_given_t(self,x:Union[torch.tensor,np.ndarray],t:Union[int,torch.Tensor,np.ndarray]):
+        B,N,D = x.shape
+        if self.system_wise:
+            score = np.zeros((B,D))
+            norm = np.ones((B,1))
+        else:
+            score = np.zeros((B,N,D))
+            norm = np.ones((B,N))
+        return x, score, norm
+    
+    def sample(self, x:torch.tensor):
+        x = try_to_tensor(x)
+        if x.dim() != 3:
+            raise ValueError("Expecting input tensor to have shape (B,N,D), but got shape {}".format(x.shape))
+        B = x.shape[0]
+        ts = self.sample_time(B)
+        return *self.sample_given_t(x,ts),ts
+
+    def reverse_dt(self,
+                   x:torch.tensor,
+                   t:int,
+                   score:torch.tensor,
+                   stochastic:bool = False):
+        return x
 
 class GaussianSampler(BaseSampler):
     def __init__(self,
@@ -356,7 +418,7 @@ class GaussianSampler(BaseSampler):
         if t.ndim == 1:
             t = t[:,None]*np.ones((B,N),dtype = int)
         e = s_normal(B,N,D)
-        variance = 1 - self.alphas[t]
+        variance = self.noise[t]**2
         variance = variance[...,None]
         x_t =  x + np.sqrt(variance) * e
         score = -self.score(e,x_t) if self.return_negative_score else self.score(e,x_t)
@@ -415,8 +477,8 @@ class GaussianSampler(BaseSampler):
             t = t*np.ones((B,N),dtype = int)
         if t.ndim == 1:
             t = t[:,None]*np.ones((B,N),dtype = int)
-        sigma_t = self.sigma[t][...,None]
-        sigma_t_1 = self.sigma[np.maximum(t-1,0)][...,None]
+        sigma_t = self.noise[t][...,None]
+        sigma_t_1 = self.noise[np.maximum(t-1,0)][...,None]
         sigma_t_1[t==0] = 0
         if stochastic:
             e = s_normal(B,N,D)
@@ -447,7 +509,7 @@ class RotationSampler(BaseSampler):
     def score(self,eps,sampled):
         return score_vec(eps,sampled)
     
-    def sample_given_t(self,x:Union[torch.tensor,np.ndarray],t:Union[int,torch.Tensor,np.ndarray]):
+    def sample_given_t_vp(self,x:Union[torch.tensor,np.ndarray],t:Union[int,torch.Tensor,np.ndarray]):
         """
         Input:
             x: Union[torch.tensor,np.ndarray], the input coordinates of the atoms, shape (N,3).
@@ -469,7 +531,30 @@ class RotationSampler(BaseSampler):
             x_c = x.mean(axis = 1,keepdims = True)
             x_t = torch.einsum('ijk,ilk->ilj',Rot,(x - x_c))+ x_c
         return x_t, score, norm
-    
+
+    def sample_given_t_ve(self,x:Union[torch.tensor,np.ndarray],t:Union[int,torch.Tensor,np.ndarray]):
+        """
+        Input:
+            x: Union[torch.tensor,np.ndarray], the input coordinates of the atoms, shape (N,3).
+        """
+        x = try_to_tensor(x)
+        t = try_to_numpy(t)
+        b,N,D = x.shape
+        assert D==3, "Rotation sampler works only for 3D coordinates"
+        if is_int(t):
+            t = np.asarray([t] * b)
+        variance = self.noise[t]**2
+        eps = np.sqrt(variance)
+        eular_vec = np.vstack([sample_vec(eps[i])for i in range(b)])
+        score = np.vstack([self.score(e,vec) for e,vec in zip(eps,eular_vec)])
+        score = score if self.return_negative_score else -score #score is already negative score.
+        norm = score_norm(eps)[...,None]
+        with torch.no_grad():
+            Rot = torch.Tensor(Rotation.from_rotvec(eular_vec).as_matrix())
+            x_c = x.mean(axis = 1,keepdims = True)
+            x_t = torch.einsum('ijk,ilk->ilj',Rot,(x - x_c))+ x_c
+        return x_t, score, norm
+
     def dimensional_check(self,x,score):
         B,N,D = x.shape
         score_shape = score.shape
@@ -501,8 +586,8 @@ class RotationSampler(BaseSampler):
         if is_int(t):
             t = np.asarray([t] * B)
         assert t.ndim == 1, "The time step should be a 1D array with shaep (B)"
-        sigma_t = self.sigma[t][...,None] # (B,1)
-        sigma_t_1 = self.sigma[np.maximum(t-1,0)][...,None] # (B,1)
+        sigma_t = self.noise[t][...,None] # (B,1)
+        sigma_t_1 = self.noise[np.maximum(t-1,0)][...,None] # (B,1)
         sigma_t_1[t==0] = 0
         score = score if self.return_negative_score else -score
         r_t = self._ve_kernel(np.zeros((B,D)),score,sigma_t,sigma_t_1,with_noise = stochastic)
@@ -548,7 +633,7 @@ class TranslationSampler(BaseSampler):
     def score(self,eps,sampled):
         return eps
 
-    def sample_given_t(self,x:Union[torch.tensor,np.ndarray],t:Union[int,torch.Tensor,np.ndarray]):
+    def sample_given_t_vp(self,x:Union[torch.tensor,np.ndarray],t:Union[int,torch.Tensor,np.ndarray]):
         """
         Input:
             x: Union[torch.tensor,np.ndarray], the input coordinates of the atoms, shape (B,N,3).
@@ -569,7 +654,26 @@ class TranslationSampler(BaseSampler):
             score = self.score(e,x_t)
             score = -score if self.return_negative_score else score
         return torch.tensor(x_t), score, np.sqrt(variance)
-    
+
+    def sample_given_t_ve(self,x:Union[torch.tensor,np.ndarray],t:Union[int,torch.Tensor,np.ndarray]):
+        """
+        Input:
+            x: Union[torch.tensor,np.ndarray], the input coordinates of the atoms, shape (B,N,3).
+            t: Union[int,torch.Tensor,np.ndarray], the time step, can be set differently for each atom.
+        """
+        x = try_to_numpy(x)
+        B,N,D = x.shape
+        if is_int(t):
+            t = [t] * B
+        e = s_normal(len(x),D)
+        variance = self.noise[t]**2
+        variance = variance[...,None]
+        with torch.no_grad():
+            x_t = x + np.sqrt(variance) * e
+            score = self.score(e,x_t)
+            score = -score if self.return_negative_score else score
+        return torch.tensor(x_t), score, np.sqrt(variance)
+
     def sample(self, x:torch.tensor):
         x = try_to_tensor(x)
         if x.dim() != 3:
@@ -615,8 +719,8 @@ class TranslationSampler(BaseSampler):
         self.dimensional_check(x,score)
         if is_int(t):
             t = np.asarray([t] * B)
-        sigma_t = self.sigma[t][:,None]
-        sigma_t_1 = self.sigma[np.maximum(t-1,0)][:,None]
+        sigma_t = self.noise[t][:,None]
+        sigma_t_1 = self.noise[np.maximum(t-1,0)][:,None]
         sigma_t_1[t==0] = 0
         #Algorithm 3 predictor part in PC sampling (VE SDE) in Song et al., https://arxiv.org/pdf/2011.13456.pdf
         score = score if self.return_negative_score else -score
@@ -688,6 +792,10 @@ if __name__ == "__main__":
     from matplotlib import pyplot as plt
     T = 500
     linear_sch = LinearScheduler(T)
+    ll_sch_std = LogLinearScheduler(T,sigma_min = 1e-5, sigma_max = 1) #Parameter value from diffdock rot_sigma_min/max
+    ll_sch_tr = LogLinearScheduler(T,sigma_min = 0.1, sigma_max = 30) #Parameter value from diffdock tr_sigma_min/max
+    ll_sch_rot = LogLinearScheduler(T,sigma_min = 0.1, sigma_max = 1.65)
+    ll_sch_pert = LogLinearScheduler(T,sigma_min = 0.1, sigma_max = 1)
     cos_sch = CosineScheduler(T)
     geo_sch = GeometricScheduler(T)
     poly_sch = PolynomialScheduler(T)
@@ -696,6 +804,7 @@ if __name__ == "__main__":
     ax[0].plot(cos_sch.noise,label = "Cosine")
     ax[0].plot(geo_sch.noise,label = "Geometric")
     ax[0].plot(poly_sch.noise,label = "Polynomial")
+    ax[0].plot(ll_sch_std.noise,label = "LogLinear std")
     ax[0].set_title("Noise")
     ax[0].set_ylabel("beta_t")
     ax[0].legend()
@@ -703,14 +812,16 @@ if __name__ == "__main__":
     ax[1].plot(cos_sch.alpha,label = "Cosine")
     ax[1].plot(geo_sch.alpha,label = "Geometric")
     ax[1].plot(poly_sch.alpha,label = "Polynomial")
+    ax[1].plot(ll_sch_std.alpha,label = "LogLinear std")
     ax[1].set_title("Alpha")
     ax[1].legend()
     ax[1].set_ylabel("alpha_t")
     
-    rot_sampler = RotationSampler(T = T, schedular=geo_sch)
-    g_sampler = GaussianSampler(T = T, schedular = poly_sch)
-    g_sampler2 = GaussianSampler(T = T,schedular = poly_sch)
-    tr_sampler = TranslationSampler(T = T,schedular = cos_sch)
+    rot_sampler = RotationSampler(T = T, schedular=ll_sch_rot)
+    g_sampler = GaussianSampler(T = T, schedular = ll_sch_pert)
+    g_sampler2 = GaussianSampler(T = T,schedular = ll_sch_pert)
+    # tr_sampler = TranslationSampler(T = T,schedular = ll_sch_tr,sde_format = "VE")
+    tr_sampler = TranslationSampler(T = T,schedular = ll_sch_std,sde_format = "VP")
     composed = ChainSampler(rot_sampler).compose(g_sampler).compose(tr_sampler)
     composed1 = ChainSampler(g_sampler2)
     #generate a mesh grid
@@ -729,7 +840,7 @@ if __name__ == "__main__":
     x_compose, c_score, c_norm,c_ts = composed.sample(x_0)
 
     # Reverse the diffusion
-    reverse_T = 20
+    reverse_T = 50
     rot_sampler.set_T(reverse_T)
     g_sampler.set_T(reverse_T)
     tr_sampler.set_T(reverse_T)
@@ -769,7 +880,7 @@ if __name__ == "__main__":
     x_2rev = x_3
     for t in ts_rev:
         dist_tr.append(average_distances(x_2,x_2rev))
-        x_2rev = tr_sampler.reverse_dt(x_2rev,int(t),tr_score)
+        x_2rev = tr_sampler.reverse_dt(x_2rev,int(t),tr_score,stochastic=False)
     dist_tr.append(average_distances(x_2,x_2rev))
 
     _,_,_,c1_ts = composed1.sample(x_0)
