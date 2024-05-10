@@ -6,23 +6,43 @@ from dtmol.utils.datasets import CrossDataset
 from dtmol.utils.dictionary import Dictionary
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
-from dtmol.diffusion import RotationSampler, GaussianSampler, TranslationSampler, ChainSampler
-from dtmol.diffusion import GeometricScheduler, PolynomialScheduler, CosineScheduler
+from dtmol.diffusion import RotationSampler, GaussianSampler, TranslationSampler, ChainSampler, DummySampler
+from dtmol.diffusion import GeometricScheduler, PolynomialScheduler, CosineScheduler,LogLinearScheduler
 
 def load_unimol_binding_data(config,
                              data_f,
-                             split = ['train','valid','test']):
+                             split = ['train','valid','test'],
+                             perturbation_mole = True,
+                             perturbation_prot = True,
+                             trrot = True):
     PRETRAIN_FOLDER = f"{dtmol.__path__[0]}/models/pretrain"
     ligand_dict = Dictionary.load(f"{PRETRAIN_FOLDER}/unimol_molecule_dict.txt")
     protein_dict = Dictionary.load(f"{PRETRAIN_FOLDER}/unimol_protein_dict.txt")
     T = 5000
     cos_sch = CosineScheduler(T)
-    geo_sch = GeometricScheduler(T)
-    poly_sch = PolynomialScheduler(T)
-    rot_sampler = RotationSampler(schedular=geo_sch)
-    g_sampler = GaussianSampler(schedular = cos_sch)
-    g_sampler2 = GaussianSampler(schedular = cos_sch)
-    tr_sampler = TranslationSampler(schedular = cos_sch)
+    # geo_sch = GeometricScheduler(T)
+    # poly_sch = PolynomialScheduler(T)
+    ll_sch_tr = LogLinearScheduler(T,sigma_min = config['tr_sigma_min'], 
+                                   sigma_max = config['tr_sigma_max']) #Parameter value from diffdock tr_sigma_min/max
+    ll_sch_rot = LogLinearScheduler(T,sigma_min = config['rot_sigma_min'], 
+                                    sigma_max = config['rot_sigma_max'])
+    ll_sch_pert = LogLinearScheduler(T,sigma_min = config['pert_mole_sigma_min'], 
+                                     sigma_max = config['pert_mole_sigma_max'])
+    ll_sch_pert2 = LogLinearScheduler(T,sigma_min = config['pert_prot_sigma_min'], 
+                                      sigma_max = config['pert_prot_sigma_max'])
+    rot_sampler = RotationSampler(schedular=ll_sch_rot,sde_format = config['rot_sde'])
+    g_sampler = GaussianSampler(schedular = ll_sch_pert,sde_format = config['pert_mole_sde'])
+    g_sampler2 = GaussianSampler(schedular = ll_sch_pert2,sde_format=config['pert_prot_sde'])
+    tr_sampler = TranslationSampler(schedular = ll_sch_tr,sde_format = config['tr_sde'])
+    dummy_sampler = DummySampler(schedular = cos_sch,sde_format = config['tr_sde'],system_wise = False)
+    dummy_system_sampler = DummySampler(schedular = cos_sch,sde_format = config['tr_sde'],system_wise = True)
+    if not trrot:
+        rot_sampler = dummy_system_sampler
+        tr_sampler = dummy_system_sampler
+    if not perturbation_mole:
+        g_sampler = dummy_sampler
+    if not perturbation_prot:
+        g_sampler2 = dummy_sampler
     molecule_sampler = ChainSampler(rot_sampler).compose(tr_sampler).compose(g_sampler)
     protein_sampler = ChainSampler(g_sampler2)
     protein_sampler.conjugate(molecule_sampler) #Sychnronize the time of protein sampler and molecule sampler

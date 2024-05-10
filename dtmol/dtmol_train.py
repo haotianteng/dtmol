@@ -23,6 +23,7 @@ from dtmol.decoder import Decoder
 from dtmol.dtmol_model import DummyModelConfig
 from dtmol.diffusion import RotationSampler, GaussianSampler
 from dtmol.utils.sampling import reverse_sampling, rmsd
+from dtmol.utils.arguments import parse_args, print_args
 from torch.utils.data import DataLoader
 from torch.nn.parallel import DistributedDataParallel as DDP
 torch.autograd.set_detect_anomaly(True)
@@ -73,12 +74,14 @@ class DiffusionTrainer(Trainer):
                         trrot_losses, pert_losses = [], []
                         for valid_i,valid_batch in enumerate(self.eval_ds):
                             trrot_loss,pert_loss = self.valid_step(valid_batch)
-                            trrot_losses.append(trrot_loss.item())
-                            pert_losses.append(pert_loss.item())
+                            if trrot_loss is not None:
+                                trrot_losses.append(trrot_loss.item())
+                            if pert_loss is not None:
+                                pert_losses.append(pert_loss.item())
                             if valid_i > self.config.TRAIN['valid_first_n']:
                                 break
-                        trrot_loss = np.mean(trrot_losses)
-                        pert_loss = np.mean(pert_losses)
+                        trrot_loss = np.mean(trrot_losses) if self.config.TRAIN['trrot_loss'] else 0.0
+                        pert_loss = np.mean(pert_losses) if self.config.TRAIN['perturbation_loss'] else 0.0
                         if self._on_main_rank():
                             msg = f"Epoch {epoch_i}: Step {i_step}, train loss {loss:.4f}, valid trrot_loss {trrot_loss:.4f}, perturbation loss {pert_loss:.4f}"
                             self.logger.info(msg)
@@ -120,12 +123,16 @@ class DiffusionTrainer(Trainer):
             losses = self.nets.module.diffusion_loss(output, 
                                                      padding_mask.clone(), 
                                                      batch['diffused'], 
-                                                     norm_weighted=norm_weighted)
+                                                     norm_weighted=norm_weighted,
+                                                     trrot_diffusion = self.config.TRAIN['trrot_loss'],
+                                                     perturbation_diffusion = self.config.TRAIN['perturbation_loss'])
         else:
             losses = self.nets.diffusion_loss(output, 
                                               padding_mask.clone(), 
                                               batch['diffused'],
-                                              norm_weighted=norm_weighted)
+                                              norm_weighted=norm_weighted,
+                                              trrot_diffusion = self.config.TRAIN['trrot_loss'],
+                                              perturbation_diffusion = self.config.TRAIN['perturbation_loss'])
         return losses
 
     def rmsd(self, coord, label, mole_padding, prot_padding):
@@ -134,13 +141,16 @@ class DiffusionTrainer(Trainer):
     
     def train_step(self, batch):
         output, padding_mask = self.nets(batch)
-        loss = sum(self.loss(output, padding_mask, batch, norm_weighted=self.config.TRAIN['norm_weighted']))
+        losses = self.loss(output, padding_mask, batch, norm_weighted=self.config.TRAIN['norm_weighted'])
+        loss = sum([val for key,val in losses.items()])
         return loss
 
     def valid_step(self, batch):
         with torch.no_grad():
             output, padding_mask = self.nets(batch)
-            trrot_loss, pert_loss = self.loss(output, padding_mask, batch,norm_weighted=False)
+            losses = self.loss(output, padding_mask, batch,norm_weighted=False)
+            trrot_loss = losses['trrot_loss'] if self.config.TRAIN['trrot_loss'] else None
+            pert_loss = losses['perturbation_loss'] if self.config.TRAIN['perturbation_loss'] else None    
             if self.use_wandb and self._on_main_rank():
                 wandb.log({"valid_trrot_loss": trrot_loss,"perturbation loss":pert_loss, "global_step": self.global_step})
         return trrot_loss, pert_loss
@@ -166,6 +176,7 @@ class DiffusionTrainer(Trainer):
 def worker(idx,world_size,args):
     distributed = world_size > 1
     train_config=  args['train']
+    dataset_config = args['dataset']
     if distributed:
         dist.init_process_group(backend="nccl", rank=idx, world_size=world_size)
     package_path = dtmol.__path__[0]
@@ -188,8 +199,8 @@ def worker(idx,world_size,args):
     os.makedirs(model_folder, exist_ok=True)
     
     ##% Buildt the model
-    pretrain_f = os.path.join(package_path, "models/pretrain")
-    dropout = args['train']['dropout']
+    pretrain_f = os.path.join(package_path, "/pretrain_models")
+    dropout = args['model']['dropout']
     MODEL_S = {'pretrain_folder': pretrain_f,
                   'load_pretrain': True,
                   'encoder': {'dropout':dropout,
@@ -251,14 +262,11 @@ def worker(idx,world_size,args):
     net.to(idx)
     if distributed:
         net = DDP(net,device_ids=[idx],find_unused_parameters=True)
-
-    dataset_config = {
-        "seed": 0,
-        "max_seq_len": 768,
-        "max_pocket_atoms": 256,
-    }
     config.DATASET = dataset_config
-    binding_dataset = load_unimol_binding_data(dataset_config,ds_path)
+    binding_dataset = load_unimol_binding_data(config.DATASET,ds_path,
+                                               perturbation_mole = config.DATASET['mole_pert'],
+                                               perturbation_prot = config.DATASET['prot_pert'],
+                                               trrot = config.DATASET['trrot'])
     loader_dict = get_dataloader(binding_dataset,
                                  batch_size = args['batch_size'],
                                  device = idx,
@@ -291,60 +299,10 @@ def main(args):
     else:
         worker(0,world_size,args)
 
-def print_args(args,level = 0):
-    prefix = "\t"*level
-    for key in args:
-        if isinstance(args[key],dict):
-            print(f"{prefix}{key}:")
-            print_args(args[key],level+1)
-        else:
-            print(f"{prefix}{key}: {args[key]}")
-
 if __name__ == "__main__":  
     os.environ["MASTER_ADDR"] = "localhost"
     os.environ["MASTER_PORT"] = "29500"
-    args = {
-        'world_size': 2,
-        'batch_size': 8,
-        'model_name': "bindingpose",
-        'data_f': "/data/unimol_data/protein_ligand_binding_pose_prediction/",
-        'train':{
-            'learning_rate':1e-4,
-            'epoches': 100,
-            'report_every': 10,
-            'valid_first_n': 10,
-            'fine_tune_pretrain': False,
-            'norm_weighted': False, # if the perturbation loss is weighted by normalization factor
-            'use_wandb': True,
-            'retrain': None,
-            'dropout': 0.0,
-            'warmup': None,
-        }
-    }
-    parser = argparse.ArgumentParser()
-    parser.add_argument("-i","--data_f",type=str,default = None)
-    parser.add_argument("--world_size",type=int,default=None)
-    parser.add_argument("--batch_size",type=int,default=None)
-    parser.add_argument("--model_name",type=str,default=None)
-    parser.add_argument("--fine_tune_pretrain",action='store_true',dest = 'fine_tune_pretrain')
-    parser.add_argument("--warmup",type = int,default=None, 
-                        help="This setting will override the fine_tune_pretrain setting, will fine tune the encoder after warmup epochs")
-    parser.add_argument("--no_wandb",action='store_false',dest='use_wandb')
-    parser.add_argument("--retrain",type = str,default=None)
-    parser.add_argument("--dropout",type=float,default=0.0)
-    parser.add_argument("--learning_rate",type=float,default=None)
-    parser.add_argument("--epoches",type=int,default=None)
-    cmd_args = vars(parser.parse_args(sys.argv[1:]))
-    #update the args with the parsed args if parser is not None
-    for key in cmd_args:
-        if cmd_args[key] is not None:
-            if key in args:
-                args[key] = cmd_args[key]
-            elif key in args['train']:
-                args['train'][key] = cmd_args[key]
-            else:
-                print('Warning: key {key} is not found in the args, will create a new key in the base-level of args.')
-                args[key] = cmd_args[key]
+    args = parse_args()
     #print the args in a nice format
     print("#"*20+"Arguments"+"#"*20)
     print_args(args)
