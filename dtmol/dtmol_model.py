@@ -22,6 +22,8 @@ class ScoreNetwork(nn.ModuleDict):
         decoder = Decoder(decoder_config, dicts['ligand_dict'])
         decoder.register_diffusion_pool_head("tr-rotation", 6)
         decoder.register_diffusion_head("perturbation", 3)
+        self.pert_weight = 1 if "pert_weight" not in config else config["pert_weight"]
+        self.trrot_weight = 1 if "trrot_weight" not in config else config["trrot_weight"]
         self['decoder'] = decoder  
 
     def build_encoder(self, pretrain_f):
@@ -164,8 +166,14 @@ class ScoreNetwork(nn.ModuleDict):
         else:
             return output, mole_padding, pocket_padding
 
-    def diffusion_loss(self, output, padding_mask, diffused_dict, atom_diffusion=False, norm_weighted=False):
-        losses = []
+    def diffusion_loss(self, output, padding_mask, diffused_dict, 
+                       perturbation_diffusion = True, 
+                       trrot_diffusion = True, 
+                       atom_diffusion=False, 
+                       norm_weighted=False):
+        if not(perturbation_diffusion) and not(trrot_diffusion) and not(atom_diffusion):
+            raise ValueError("No diffusion loss has been enabled.")
+        losses = {}
         mol_trrot_score = diffused_dict['mol_diffuse_trrot_score'][:,:2,:].to(torch.float32)
         mol_score = diffused_dict['mol_diffuse_perturb_score'].to(torch.float32)
         mol_norm = diffused_dict['mol_diffuse_perturb_norm'].to(torch.float32) 
@@ -176,17 +184,20 @@ class ScoreNetwork(nn.ModuleDict):
         perturbation_norm = torch.cat([mol_norm, pocket_norm], axis=1)
         tr_rot = output['tr-rotation'].view(-1, 2, 3)  # [B,6] -> [B,2,3]
         pert = output['perturbation']
-        trrot_loss = self['decoder'].diffusion_heads['tr-rotation'].loss(tr_rot, 
-                                                                         mol_trrot_score, 
-                                                                         norm = mol_trrot_norm,
-                                                                         norm_weighted = True)
-        losses.append(trrot_loss)
-        pert_loss = self['decoder'].diffusion_heads['perturbation'].loss(pert, 
-                                                                         perturbation_score, 
-                                                                         norm = perturbation_norm, 
-                                                                         padding_mask = padding_mask, 
-                                                                         norm_weighted = norm_weighted)
-        losses.append(pert_loss)
+        if trrot_diffusion:
+            trrot_loss = self['decoder'].diffusion_heads['tr-rotation'].loss(tr_rot, 
+                                                                            mol_trrot_score, 
+                                                                            norm = mol_trrot_norm,
+                                                                            norm_weighted = True)
+            losses['trrot_loss'] = (self.trrot_weight*trrot_loss)
+        if perturbation_diffusion:
+            padding_mask[:,0] = True # The first token <s> is for the tr-rotation loss
+            pert_loss = self['decoder'].diffusion_heads['perturbation'].loss(pert, 
+                                                                            perturbation_score, 
+                                                                            norm = perturbation_norm, 
+                                                                            padding_mask = padding_mask, 
+                                                                            norm_weighted = norm_weighted)
+            losses["perturbation_loss"] = self.pert_weight*pert_loss
         if atom_diffusion:
             raise NotImplementedError("Atom diffusion is not implemented yet.")
         return losses
@@ -200,7 +211,7 @@ if __name__ == "__main__":
     # DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
     DEVICE = "cpu"    
     ##% Buildt the model
-    pretrain_f = os.path.join(package_path, "dtmol/models/pretrain")
+    pretrain_f = os.path.join(package_path, "dtmol/pretrain_models")
     config = {"pretrain_folder": pretrain_f, "load_pretrain": True}
     net = ScoreNetwork(config)
 

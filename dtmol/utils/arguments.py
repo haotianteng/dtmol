@@ -10,7 +10,7 @@ args = {
     'train':{
         'learning_rate':1e-4,
         'epoches': 100,
-        'report_every': 10,
+        'report_every': 20,
         'valid_first_n': 10,
         'fine_tune_pretrain': False,
         'norm_weighted': False, # if the perturbation loss is weighted by normalization factor
