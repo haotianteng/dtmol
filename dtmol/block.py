@@ -642,6 +642,14 @@ class DiffusionHead(nn.Module):
 
     def loss(self, output, score, norm, padding_mask = None, norm_weighted = False):
         loss = self.mse_loss(output, score)
+
+        # ### Debugging code ###
+        # print("Debugging output in DiffusionHead loss function")
+        # print(f"output {output[0][:3]}")
+        # print(f"score {score[0][:3]}") 
+        # print(f"padding_mask {padding_mask[0][:3]}")
+        # ######################
+
         norm = norm.unsqueeze(-1)
         mask = norm > 0
         norm[~mask] = 1

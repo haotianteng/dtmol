@@ -8,10 +8,14 @@ args = {
     'model_name': "bindingpose",
     'data_f': "/data/unimol_data/protein_ligand_binding_pose_prediction/",
     'train':{
-        'learning_rate':1e-4,
+        'learning_rate':1e-3,
+        'start_lr_factor': 1e-3,
+        'lr_scheduler': 'LinaerLR',
+        'lr_warmup': 5,
         'epoches': 100,
-        'report_every': 20,
+        'report_every': 100,
         'valid_first_n': 10,
+        'eval_every_n_epoches': 5,
         'fine_tune_pretrain': False,
         'norm_weighted': False, # if the perturbation loss is weighted by normalization factor
         'use_wandb': True,
@@ -65,14 +69,21 @@ def parse_args():
     parser.add_argument("--retrain",type = str,default=None)
     parser.add_argument("--dropout",type=float,default=0.0)
     parser.add_argument("--learning_rate",type=float,default=None)
+    parser.add_argument("--start_lr_factor",type=float,default=None)
+    parser.add_argument("--lr_scheduler",type=str,default=None,
+                        help = "Choose from ['LinearLR','CosineAnnealingLR','CosineAnnealingWarmRestarts']")
+    parser.add_argument("--lr_warmup",type=int,default=None)
     parser.add_argument("--no_perturbation_loss",action = 'store_false',dest='perturbation_loss', 
                         help = "This will override the prot_pert and mole_pert setting in the dataset")
     parser.add_argument("--no_trrot_loss", action = 'store_false', dest = 'trrot_loss',
                         help = "This will override the trrot setting in the dataset")
     parser.add_argument("--epoches",type=int,default=None)
+    parser.add_argument("--report_every",type=int,default=None)
+    parser.add_argument("--valid_first_n",type=int,default=None)
+    parser.add_argument("--eval_every_n_epoches",type=int,default=None)
 
     ### Diffusion settings
-    parser.add_argument("--tr_sigma_min",type = float,default = 0.1)
+    parser.add_argument("--tr_sigma_min",type = float,default = 1e-5)
     parser.add_argument("--tr_sigma_max",type = float,default = 0.9999)
     parser.add_argument("--tr_sde", type = str, default = 'VP')
     parser.add_argument("--rot_sigma_min",type = float, default = 0.1)
@@ -93,6 +104,7 @@ def parse_args():
         cmd_args['mole_pert'] = False
     if not cmd_args['trrot_loss']:
         cmd_args['trrot'] = False
+    assert cmd_args['lr_scheduler'] in [None,'LinearLR','CosineAnnealingLR','CosineAnnealingWarmRestarts'], "lr_scheduler should be one of ['LinearLR','CosineAnnealingLR','CosineAnnealingWarmRestarts']"
     update_args(args,cmd_args)
     return args
 

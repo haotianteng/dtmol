@@ -40,13 +40,41 @@ class DiffusionTrainer(Trainer):
         self.sampler = sampler
 
     def train(self, epoches: int, optimizer, save_every_n_steps: int = 100,
-              valid_every_n_steps: int = 100, eval_every_n_epoches: int = 5 ,save_folder: str = None):
+              valid_every_n_steps: int = 100, eval_every_n_epoches: int = 5 ,save_folder: str = None,
+              schedular = None):
         self.save_folder = save_folder
         self._save_config()
         for epoch_i in range(epoches):
             if self.distributed:
                 self.train_ds.dataloader.sampler.set_epoch(epoch_i)
                 self.eval_ds.dataloader.sampler.set_epoch(epoch_i)
+
+            ### Evaluation
+            if epoch_i+1 % eval_every_n_epoches == 0:
+                if self._on_main_rank():
+                    msg = f"Epoch {epoch_i}: Evaluating the model"
+                    self.logger.info(msg)
+                mole_rmsds,prot_rmsds = [],[]
+                for eval_i,eval_batch in enumerate(self.eval_ds):
+                    mole_rmsd,prot_rmsd = self.eval_step(eval_batch)
+                    mole_rmsd,prot_rmsd = mole_rmsd.item(),prot_rmsd.item()
+                    mole_rmsds.append(mole_rmsd)
+                    prot_rmsds.append(prot_rmsd)
+                    msg = f"Eval {eval_i}/{len(self.eval_ds)}: Mole RMSD {mole_rmsd:.4f}, Prot RMSD {prot_rmsd:.4f}"
+                    self.logger.info(msg)
+                mole_rmsd = np.mean(mole_rmsds)
+                prot_rmsd = np.mean(prot_rmsds)
+                if self._on_main_rank():
+                    msg = f"Epoch {epoch_i}: mean mole RMSD {mole_rmsd:.4f}, mean prot RMSD {prot_rmsd:.4f}"
+                    self.logger.info(msg)
+                    if self.use_wandb:
+                        wandb.log({"mean mole_rmsd": mole_rmsd,
+                                   "mean prot_rmsd": prot_rmsd,
+                                   "mole_rmsd": wandb.Histogram(np.array(mole_rmsds)),
+                                   "prot_rmsd": wandb.Histogram(np.array(prot_rmsds)),
+                                   "epoch": epoch_i,
+                                   "global_step": self.global_step})
+
             ### Training
             if self.config.TRAIN['warmup'] is not None and epoch_i >= self.config.TRAIN['warmup']:
                 if self.distributed:
@@ -90,33 +118,8 @@ class DiffusionTrainer(Trainer):
                                         "train_loss": loss, 
                                         "global_step": self.global_step})
                 self.global_step += 1
-            
-            ### Evaluation
-            if epoch_i % eval_every_n_epoches == 0:
-                if self._on_main_rank():
-                    msg = f"Epoch {epoch_i}: Evaluating the model"
-                    self.logger.info(msg)
-                mole_rmsds,prot_rmsds = [],[]
-                for eval_i,eval_batch in enumerate(self.eval_ds):
-                    mole_rmsd,prot_rmsd = self.eval_step(eval_batch)
-                    mole_rmsd,prot_rmsd = mole_rmsd.item(),prot_rmsd.item()
-                    mole_rmsds.append(mole_rmsd)
-                    prot_rmsds.append(prot_rmsd)
-                    msg = f"Eval {eval_i}/{len(self.eval_ds)}: Mole RMSD {mole_rmsd:.4f}, Prot RMSD {prot_rmsd:.4f}"
-                    self.logger.info(msg)
-                mole_rmsd = np.mean(mole_rmsds)
-                prot_rmsd = np.mean(prot_rmsds)
-                if self._on_main_rank():
-                    msg = f"Epoch {epoch_i}: mean mole RMSD {mole_rmsd:.4f}, mean prot RMSD {prot_rmsd:.4f}"
-                    self.logger.info(msg)
-                    if self.use_wandb:
-                        wandb.log({"mean mole_rmsd": mole_rmsd,
-                                   "mean prot_rmsd": prot_rmsd,
-                                   "mole_rmsd": wandb.Histogram(np.array(mole_rmsds)),
-                                   "prot_rmsd": wandb.Histogram(np.array(prot_rmsds)),
-                                   "epoch": epoch_i,
-                                   "global_step": self.global_step})
-                        
+            if scedular is not None:
+                scedular.step()
 
     def loss(self, output, padding_mask, batch,norm_weighted = False):
         if self.distributed:
@@ -283,10 +286,35 @@ def worker(idx,world_size,args):
                                distributed = distributed)
     if args['train']['retrain']:
         trainer.load(model_folder)
-    optimizer = torch.optim.Adam(net.parameters(),lr = train_config['learning_rate'])
+    optimizer = optim.Adam(net.parameters(),lr = train_config['learning_rate'])
+    warmup_scheduler = optim.lr_scheduler.ConstantLR(optimizer,
+                                                           factor = config.TRAIN['start_lr_factor'],
+                                                           total_iters=config.TRAIN['lr_warmup'])
+    if config.TRAIN['lr_scheduler'] == "LinaerLR":
+        schedular = optim.lr_scheduler.LinearLR(optimizer, 
+                                                      start_factor = config.TRAIN['start_lr_factor'],
+                                                      total_iters = config.TRAIN['epoches'],
+                                                      last_epoch=-1)
+    elif config.TRAIN['lr_scheduler'] == "CosineAnnealingLR":
+        schedular = optim.lr_scheduler.CosineAnnealingLR(optimizer,
+                                                               T_max = config.TRAIN['epoches'],
+                                                               eta_min = config.TRAIN['learning_rate'] * config.TRAIN['start_lr_factor'],
+                                                               last_epoch=-1)
+    elif config.TRAIN['lr_scheduler'] == "CosineAnnealingWarmRestarts":
+        schedular = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer,
+                                                                         T_0 = 10,
+                                                                         T_mult = 2,
+                                                                         eta_min = config.TRAIN['learning_rate'] * config.TRAIN['start_lr_factor'],
+                                                                         last_epoch=-1)
+    else:
+        raise ValueError(f"Unkown lr scheduler {config.TRAIN['lr_scheduler']}")
+    schedular = optim.lr_scheduler.SequentialLR(optimizer,[warmup_scheduler,schedular],
+                                                milestones=[config.TRAIN['lr_warmup']])
     trainer.train(epoches=train_config['epoches'],
                   optimizer=optimizer,
+                  schedular=schedular,
                   valid_every_n_steps=train_config['report_every'],
+                  eval_every_n_epoches=train_config['eval_every_n_epoches'],
                   save_folder=model_folder)
 
 def main(args):
