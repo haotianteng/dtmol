@@ -26,6 +26,7 @@ from dtmol.utils.sampling import reverse_sampling, rmsd
 from dtmol.utils.arguments import parse_args, print_args
 from torch.utils.data import DataLoader
 from torch.nn.parallel import DistributedDataParallel as DDP
+from tqdm import tqdm
 torch.autograd.set_detect_anomaly(True)
 
 class DiffusionTrainer(Trainer):
@@ -44,13 +45,14 @@ class DiffusionTrainer(Trainer):
               schedular = None):
         self.save_folder = save_folder
         self._save_config()
+        loss = 0.0
         for epoch_i in range(epoches):
             if self.distributed:
                 self.train_ds.dataloader.sampler.set_epoch(epoch_i)
                 self.eval_ds.dataloader.sampler.set_epoch(epoch_i)
 
             ### Evaluation
-            if epoch_i % eval_every_n_epoches == 0:
+            if epoch_i+1 % eval_every_n_epoches == 0:
                 if self._on_main_rank():
                     msg = f"Epoch {epoch_i}: Evaluating the model"
                     self.logger.info(msg)
@@ -87,17 +89,19 @@ class DiffusionTrainer(Trainer):
                         param.requires_grad = True
                     for param in self.nets['protein_encoder'].parameters():
                         param.requires_grad = True
-            for i_step, batch in enumerate(self.train_ds):
+            pbar = tqdm(enumerate(self.train_ds),total = len(self.train_ds),desc = f"Epoch {epoch_i}, loss {loss:.4f}")
+            for i_step, batch in pbar:
                 loss = self.train_step(batch)
+                pbar.set_description(f"Epoch {epoch_i}, loss {loss:.4f}")
                 if torch.isnan(loss):
                     self._alert("NaN loss detected, skip this training step.",level = "warning")
                     continue
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
-                if i_step % save_every_n_steps == 0:
+                if i_step+1 % save_every_n_steps == 0:
                     self.save()
-                if i_step % valid_every_n_steps == 0:
+                if i_step+1 % valid_every_n_steps == 0:
                     with torch.no_grad():
                         trrot_losses, pert_losses = [], []
                         for valid_i,valid_batch in enumerate(self.eval_ds):
@@ -118,8 +122,8 @@ class DiffusionTrainer(Trainer):
                                         "train_loss": loss, 
                                         "global_step": self.global_step})
                 self.global_step += 1
-            if scedular is not None:
-                scedular.step()
+            if schedular is not None:
+                schedular.step()
 
     def loss(self, output, padding_mask, batch,norm_weighted = False):
         if self.distributed:
