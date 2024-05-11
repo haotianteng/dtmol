@@ -58,7 +58,7 @@ def rmsd(coord, label, mole_padding, prot_padding):
     prot_padding = padding_mask[:,n_mole:]
     diff[padding_mask,:] = 0
     diff = diff**2
-    diff = diff.sum(dim=-1)
+    diff = torch.sqrt(diff.sum(dim=-1))
     diff_mole = diff[:,:n_mole].sum(dim=-1)/(~mole_padding).sum(dim=-1)
     diff_prot = diff[:,n_mole:].sum(dim=-1)/(~prot_padding).sum(dim=-1)
     diff_mole = diff_mole.mean()

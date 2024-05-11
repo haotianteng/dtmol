@@ -480,10 +480,6 @@ class GaussianSampler(BaseSampler):
         sigma_t = self.noise[t][...,None]
         sigma_t_1 = self.noise[np.maximum(t-1,0)][...,None]
         sigma_t_1[t==0] = 0
-        if stochastic:
-            e = s_normal(B,N,D)
-        else:
-            e = 0
         score = score if self.return_negative_score else -score
         x_rev = self._ve_kernel(x,score,sigma_t,sigma_t_1,with_noise = stochastic)
         return x_rev

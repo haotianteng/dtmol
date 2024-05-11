@@ -50,7 +50,7 @@ class DiffusionTrainer(Trainer):
                 self.eval_ds.dataloader.sampler.set_epoch(epoch_i)
 
             ### Evaluation
-            if epoch_i+1 % eval_every_n_epoches == 0:
+            if epoch_i % eval_every_n_epoches == 0:
                 if self._on_main_rank():
                     msg = f"Epoch {epoch_i}: Evaluating the model"
                     self.logger.info(msg)
