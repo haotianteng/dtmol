@@ -426,6 +426,7 @@ class TransformerDecoderWithPair(nn.Module):
         max_seq_len: int = 256,
         activation_fn: str = "gelu",
         time_embedding_type = "sinusoidal",
+        max_time: int = 5000,
         post_ln: bool = False,
         no_final_head_layer_norm: bool = False,
     ) -> None:
@@ -434,7 +435,7 @@ class TransformerDecoderWithPair(nn.Module):
         self.emb_dropout = emb_dropout
         self.max_seq_len = max_seq_len
         self.embed_dim = embed_dim
-        self.t_embedder = get_timestep_embedding_func(time_embedding_type, embed_dim)
+        self.t_embedder = get_timestep_embedding_func(time_embedding_type, embed_dim, embedding_scale = max_time**1.5)
         self.attention_heads = attention_heads
         self.emb_layer_norm = LayerNorm(self.embed_dim)
         self.final_layer = DiTFinalLayer(embed_dim, embed_dim)

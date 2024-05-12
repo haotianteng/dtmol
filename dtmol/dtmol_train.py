@@ -52,7 +52,7 @@ class DiffusionTrainer(Trainer):
                 self.eval_ds.dataloader.sampler.set_epoch(epoch_i)
 
             ### Evaluation
-            if epoch_i+1 % eval_every_n_epoches == 0:
+            if (epoch_i+1) % eval_every_n_epoches == 0:
                 if self._on_main_rank():
                     msg = f"Epoch {epoch_i}: Evaluating the model"
                     self.logger.info(msg)
@@ -99,9 +99,9 @@ class DiffusionTrainer(Trainer):
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
-                if i_step+1 % save_every_n_steps == 0:
+                if (i_step+1) % save_every_n_steps == 0:
                     self.save()
-                if i_step+1 % valid_every_n_steps == 0:
+                if (i_step+1) % valid_every_n_steps == 0:
                     with torch.no_grad():
                         trrot_losses, pert_losses = [], []
                         for valid_i,valid_batch in enumerate(self.eval_ds):
@@ -255,6 +255,7 @@ def worker(idx,world_size,args):
         config.MODEL = MODEL_XL
     else:
         config.MODEL= MODEL_S
+    config.MODEL['max_diffusion_time'] = dataset_config['max_diffusion_time']
     net = ScoreNetwork(config.MODEL)
     if args['train']['fine_tune_pretrain'] and args['train']['warmup'] is None:
         for param in net['ligand_encoder'].parameters():

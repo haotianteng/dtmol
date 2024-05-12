@@ -34,6 +34,7 @@ args = {
     'dataset':
     {
         "seed": 0,
+        "max_diffusion_time":5000,
         "max_seq_len": 768,
         "max_pocket_atoms": 256,
         'tr_sigma_min': 0.1,

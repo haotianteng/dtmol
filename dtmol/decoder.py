@@ -23,6 +23,7 @@ def base_architecture(args):
     args.rot_loss = getattr(args, "rotation_loss", -1.0)
     args.tr_loss = getattr(args, "translation_loss", -1.0)
     args.g_loss = getattr(args, "g_noise_loss", -1.0)
+    args.max_diffusion_time = getattr(args, "max_diffusion_time", 5000)
 
 class Decoder(nn.Module):
     def __init__(self, config, dictionary) -> None:
@@ -43,6 +44,8 @@ class Decoder(nn.Module):
             activation_fn=config.activation_fn,
             max_seq_len=config.max_seq_len,
             post_ln=config.post_ln,
+            max_time = config.max_diffusion_time,
+
         )
         self.gbf_proj = NonLinearHead(
             input_dim=config.n_gaussian_basis,
