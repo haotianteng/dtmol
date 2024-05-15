@@ -565,7 +565,7 @@ class TransformerDecoderWithPair(nn.Module):
             normalizer = torch.sqrt(torch.sum(~torch.isinf(attn_disp),axis = -1))
             # fill -inf with 0
             attn_disp[torch.isinf(attn_disp)] = 0 
-            attn_disp = self.sigmoid(attn_disp) - 0.5
+            attn_disp = 2*(self.sigmoid(attn_disp) - 0.5) # -1 to +1
             # attn_disp = nn.SiLU
             #project attn_mask with self.atten_proj
             # attn_disp = self.atten_proj(attn_mask.permute(0,2,3,1)).permute(0,3,1,2) # [bsz, head, seq_len, seq_len]
