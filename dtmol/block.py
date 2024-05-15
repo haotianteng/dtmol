@@ -562,6 +562,9 @@ class TransformerDecoderWithPair(nn.Module):
             # print("Attention prob shape: ", attn_prob.shape) # [bsz*head, seq_len, seq_len]
             # print("x shape: ", x.shape) # [bsz, seq_len, embed_dim]
             attn_disp = attn_disp.view(bsz, self.attention_heads, seq_len, seq_len).contiguous() # [bsz, head, seq_len, seq_len]
+            normalizer = torch.sqrt(torch.sum(~torch.isinf(attn_disp),axis = -1))
+            # fill -inf with 0
+            attn_disp[torch.isinf(attn_disp)] = 0 
             attn_disp = self.sigmoid(attn_disp) - 0.5
             # attn_disp = nn.SiLU
             #project attn_mask with self.atten_proj
@@ -571,7 +574,12 @@ class TransformerDecoderWithPair(nn.Module):
             # SE(3)-equivariant branch
             displacement_tensor = displacement(coordinates.view(bsz*self.attention_heads, seq_len, d)).view(bsz, self.attention_heads, seq_len, seq_len, d) # [bsz, head, seq_len, seq_len, d]
             displacement_tensor = attn_disp.unsqueeze(-1) * displacement_tensor # [bsz, head, seq_len, seq_len, d]
-            displacement_tensor = displacement_tensor.mean(dim=-2) # [bsz, seq_len, seq_len, d]
+            # non_zero = (displacement)
+            displacement_tensor = displacement_tensor.sum(dim=-2) # [bsz, head, seq_len, d]
+            displacement_tensor = displacement_tensor / (normalizer.unsqueeze(-1) + 1e-5) # divide by sqrt(d)
+            #normalize by the sqrt of number of non-zero elements
+            
+
             coordinates = coordinates + displacement_tensor # [bsz, head, seq_len, d]
 
         x = self.final_layer(x, t) # [bsz, seq_len, embed_dim]
