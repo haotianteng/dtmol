@@ -24,6 +24,8 @@ from dtmol.dtmol_model import DummyModelConfig
 from dtmol.diffusion import RotationSampler, GaussianSampler
 from dtmol.utils.sampling import reverse_sampling, rmsd
 from dtmol.utils.arguments import parse_args, print_args
+from dtmol.utils.train_monitor import plot_grad_flow
+from dtmol.dtmol_init import PRETRAIN_FOLDER as pretrain_f
 from torch.utils.data import DataLoader
 from torch.nn.parallel import DistributedDataParallel as DDP
 from tqdm import tqdm
@@ -98,6 +100,10 @@ class DiffusionTrainer(Trainer):
                     continue
                 optimizer.zero_grad()
                 loss.backward()
+                if self.config.TRAIN['grad_norm'] > 0:
+                    nn.utils.clip_grad_norm_(self.nets.parameters(), self.config.TRAIN['grad_norm'])
+                if self.config.TRAIN['mode'] == "debug":
+                    plot_grad_flow(self.nets.named_parameters(),use_wandb = self.use_wandb)
                 optimizer.step()
                 if (i_step+1) % save_every_n_steps == 0:
                     self.save()
@@ -184,6 +190,9 @@ def worker(idx,world_size,args):
     distributed = world_size > 1
     train_config=  args['train']
     dataset_config = args['dataset']
+    if args['train']['mode'] == "debug":
+        args['dataset']['max_diffusion_time'] = 10
+        args['train']['eval_every_n_epoches'] = 1e6 #Never evaluate the model in debug mode
     if distributed:
         dist.init_process_group(backend="nccl", rank=idx, world_size=world_size)
     package_path = dtmol.__path__[0]
@@ -206,7 +215,6 @@ def worker(idx,world_size,args):
     os.makedirs(model_folder, exist_ok=True)
     
     ##% Buildt the model
-    pretrain_f = os.path.join(package_path, "pretrain_models")
     dropout = args['model']['dropout']
     MODEL_S = {'pretrain_folder': pretrain_f,
                   'load_pretrain': True,
@@ -281,7 +289,11 @@ def worker(idx,world_size,args):
                                  distributed= distributed)
 
     ##% Build the trainer
-    trainer = DiffusionTrainer(train_dataloader=loader_dict['train'],
+    if args['train']['mode'] == "debug":
+        train_loader = loader_dict['test'] #Use a small test set to see if the model convergence
+    else:
+        train_loader = loader_dict['train']
+    trainer = DiffusionTrainer(train_dataloader=train_loader,
                                eval_dataloader=loader_dict['valid'],
                                nets=net,
                                sampler = {"molecule": binding_dataset.mole_diffusion_sampler,

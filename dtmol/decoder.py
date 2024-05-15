@@ -59,6 +59,8 @@ class Decoder(nn.Module):
     def forward(self, 
                 embd_molecule, 
                 embd_protein,
+                coor_molecule,
+                coor_protein,
                 timesteps,
                 padding_molecule,
                 padding_protein,
@@ -74,6 +76,8 @@ class Decoder(nn.Module):
         Inpurt Args;
             embd_molecule: (batch, n_molecule, embd_dim) the embedding of the molecule from the molecule encoder
             embd_protein: (batch, n_protein, embd_dim) the embedding of the protein from the protein encoder.
+            coor_molecule: (batch, n_molecule, 3) the coordinate matrix of the molecule.
+            coor_protein: (batch, n_protein, 3) the coordinate matrix of the protein.
             time_steps: (batch) the time steps for the diffusion.
             padding_molecule: (batch, n_molecule) the padding mask for the molecule.
             padding_protein: (batch, n_protein) the padding mask for the protein.
@@ -84,6 +88,8 @@ class Decoder(nn.Module):
             diffusion_heads: name of diffusion heads to run.
         """
         full_embd = torch.cat([embd_molecule, embd_protein], dim=1)
+        full_coor = torch.cat([coor_molecule, coor_protein], dim=1)
+        full_coor[:,0,:] = torch.mean(coor_molecule,dim=1) # Set the first coordinate to the center of the molecule (which will be used tp calculate the system score later)
         if padding_molecule is None:
             padding_molecule = torch.zeros(embd_molecule.size(0), embd_molecule.size(1),dtype = torch.bool).to(embd_molecule.device)
         if padding_protein is None:
@@ -114,18 +120,20 @@ class Decoder(nn.Module):
             delta_decoder_pair_rep,
             x_norm,
             delta_decoder_pair_rep_norm,
-        ) = self.decoder(full_embd, timesteps, padding_mask=full_padding, attn_mask=full_attn)
+            displacement_tensor,
+        ) = self.decoder(full_embd, full_coor, timesteps, padding_mask=full_padding, attn_mask=full_attn)
         decoder_pair_rep[decoder_pair_rep == float("-inf")] = 0
         if diffusion_heads is None:
-            return decoder_rep, decoder_pair_rep, delta_decoder_pair_rep, x_norm, delta_decoder_pair_rep_norm
+            return decoder_rep, decoder_pair_rep, delta_decoder_pair_rep, x_norm, delta_decoder_pair_rep_norm,displacement_tensor
         else:
             scores = {}
             for head in diffusion_heads:
                 if head not in self.diffusion_heads:
                     raise ValueError(f"Head {head} not registered")
-                scores[head] = self.diffusion_heads[head](decoder_rep)
+                scores[head] = self.diffusion_heads[head](decoder_rep,displacement_tensor)
             return scores, full_padding
         
+
     def register_diffusion_head(
         self, name, out_dim=None, hidden_dim=None,
     ):
@@ -142,6 +150,7 @@ class Decoder(nn.Module):
                 )
         self.diffusion_heads[name] = DiffusionHead(
             input_dim=self.config.embed_dim,
+            input_dim2 = self.config.attention_heads, #number of heads
             hidden_dim=hidden_dim or self.config.embed_dim,
             out_dim=out_dim,
             activation_fn=self.config.head_activate_fn
@@ -163,6 +172,7 @@ class Decoder(nn.Module):
                 )
         self.diffusion_heads[name] = DiffusionPoolHead(
             input_dim=self.config.embed_dim,
+            input_dim2 = self.config.attention_heads, #number of heads
             hidden_dim=hidden_dim or self.config.embed_dim,
             out_dim=out_dim,
             activation_fn=self.config.head_activate_fn,

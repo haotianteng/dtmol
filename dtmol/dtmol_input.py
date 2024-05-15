@@ -117,6 +117,22 @@ if __name__ == "__main__":
     "seed": 0,
     "max_seq_len": 1000,
     "max_pocket_atoms": 256,
+    "max_diffusion_time": 5000,
+    'tr_sigma_min': 0.1,
+    'tr_sigma_max': 0.9999,
+    'tr_sde': 'VP',
+    'rot_sigma_min': 0.1,
+    'rot_sigma_max': 1.65,
+    'rot_sde': 'VE',
+    'pert_mole_sigma_min': 0.1,
+    'pert_mole_sigma_max': 1,
+    'pert_mole_sde': 'VE',
+    'pert_prot_sigma_min': 0.1,
+    'pert_prot_sigma_max': 1,
+    'pert_prot_sde': 'VE',
+    'prot_pert': True,
+    'mole_pert': True,
+    'trrot': True,
     }
     loader_dict = load_unimol_binding_data(test_config,protein_path)
     loader_dict = get_dataloader(loader_dict,batch_size = 4)

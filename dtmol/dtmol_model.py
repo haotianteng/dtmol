@@ -132,6 +132,8 @@ class ScoreNetwork(nn.ModuleDict):
             cross_dist, cross_edges = batch['net_input']['cross_distance'], batch['net_input']['cross_edge_type']
         output, padding_mask = self['decoder'](embd_molecule = mole_embd, 
                                                embd_protein = pocket_embd,
+                                               coor_molecule = mole_input['src_coord'],
+                                               coor_protein = pocket_input['src_coord'],
                                                timesteps = mole_time.squeeze(1), 
                                                padding_molecule = mole_padding, 
                                                padding_protein = pocket_padding,

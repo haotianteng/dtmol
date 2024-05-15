@@ -46,6 +46,16 @@ from unimol.data import (
     CrossDistanceDataset,
     RightPadDatasetCross2D,
 ) # Additional load for cross (mole + protein) dataset
+
+from dtmol.utils.dataset_util import (
+    DisplacementDataset,
+    CrossDisplacementDataset,
+    FullDisplacementDataset,
+    RightPadDataset3D,
+    RightPadDatasetCross3D,
+    PrependAndAppend3DDataset,
+) # Customized dataset for displacement
+
 from unicore.data import BaseWrapperDataset
 import torch
 from torch.utils.data import Dataset
@@ -500,8 +510,10 @@ class CrossDataset(DictDataset):
         ## Processing coordinates
         coord_dataset = FromNumpyDataset(coord_dataset)
         distance_dataset = DistanceDataset(coord_dataset)
+        displacement_dataset = DisplacementDataset(coord_dataset)
         coord_dataset = PrependAndAppend(coord_dataset, 0.0, 0.0)
         distance_dataset = PrependAndAppend2DDataset(distance_dataset, 0.0)
+        displacement_dataset = PrependAndAppend3DDataset(displacement_dataset, 0.0)
 
         src_pocket_dataset = KeyDataset(apo_dataset, "pocket_atoms")
         src_pocket_dataset = TokenizeDataset(
@@ -519,10 +531,14 @@ class CrossDataset(DictDataset):
             src_pocket_dataset, len(self.pocket_dictionary)
         )
         coord_pocket_dataset = FromNumpyDataset(coord_pocket_dataset)
-        distance_pocket_dataset = DistanceDataset(coord_pocket_dataset)        
+        distance_pocket_dataset = DistanceDataset(coord_pocket_dataset)
+        displacement_pocket_dataset = DisplacementDataset(coord_pocket_dataset)
         coord_pocket_dataset = PrependAndAppend(coord_pocket_dataset, 0.0, 0.0)
         distance_pocket_dataset = PrependAndAppend2DDataset(
             distance_pocket_dataset, 0.0
+        )
+        displacement_pocket_dataset = PrependAndAppend3DDataset(
+            displacement_pocket_dataset, 0.0
         )
         cross_edgetype_dataset = CrossEdgeTypeDataset(
             src_dataset, src_pocket_dataset, len(self.dictionary)
@@ -541,7 +557,11 @@ class CrossDataset(DictDataset):
         holo_cross_distance_dataset = CrossDistanceDataset(
             holo_coord_dataset, holo_coord_pocket_dataset
         )
+        holo_cross_displacement_dataset = CrossDisplacementDataset(
+            holo_coord_dataset, holo_coord_pocket_dataset
+        )
         holo_distance_dataset = DistanceDataset(holo_coord_dataset)
+        holo_displacement_dataset = DisplacementDataset(holo_coord_dataset)
         ## Add diffusion to protein atom
         if protein_diffusion_sampler is not None:
             pocket_diffused_dataset = DiffusionDataset(
@@ -553,8 +573,10 @@ class CrossDataset(DictDataset):
             pocket_diffused_dataset.set_epoch(epoch)
             coord_pocket_diffused_dataset_nocat = KeyDataset(pocket_diffused_dataset, "diffused")
             distance_pocket_diffused_dataset = DistanceDataset(coord_pocket_diffused_dataset_nocat)
+            displacement_pocket_diffused_dataset = DisplacementDataset(coord_pocket_diffused_dataset_nocat)
             coord_pocket_diffused_dataset = PrependAndAppend(coord_pocket_diffused_dataset_nocat, 0.0, 0.0)
             distance_pocket_diffused_dataset = PrependAndAppend2DDataset(distance_pocket_diffused_dataset, 0.0)
+            displacement_pocket_diffused_dataset = PrependAndAppend3DDataset(displacement_pocket_diffused_dataset, 0.0)
             pocket_score_dataset = KeyDataset(pocket_diffused_dataset, "score")
             pocket_score_dataset = FromNumpyDataset(pocket_score_dataset)
             pocket_norm_dataset = KeyDataset(pocket_diffused_dataset, "norm")
@@ -574,8 +596,10 @@ class CrossDataset(DictDataset):
             mol_diffused.set_epoch(epoch)
             holo_coord_diffused_nocat = KeyDataset(mol_diffused, "diffused")
             holo_distance_diffused = DistanceDataset(holo_coord_diffused_nocat)
+            holo_displacement_diffused = DisplacementDataset(holo_coord_diffused_nocat)
             holo_coord_diffused = PrependAndAppend(holo_coord_diffused_nocat, 0.0, 0.0)
             holo_distance_diffused = PrependAndAppend2DDataset(holo_distance_diffused, 0.0)
+            holo_displacement_diffused = PrependAndAppend3DDataset(holo_displacement_diffused, 0.0)
             holo_time_dataset = KeyDataset(mol_diffused, "time_steps")
             holo_time_dataset = FromNumpyDataset(holo_time_dataset)
             coord_score_dataset = KeyDataset(mol_diffused, "score")
@@ -598,8 +622,14 @@ class CrossDataset(DictDataset):
             diffuse_cross_distance_dataset = CrossDistanceDataset(
                 holo_coord_diffused_nocat, coord_pocket_diffused_dataset_nocat
             )
+            diffuse_cross_displacement_dataset = CrossDisplacementDataset(
+                holo_coord_diffused_nocat, coord_pocket_diffused_dataset_nocat
+            )
             diffuse_cross_distance_dataset = PrependAndAppend2DDataset(
                 diffuse_cross_distance_dataset, 0.0
+            )
+            diffuse_cross_displacement_dataset = PrependAndAppend3DDataset(
+                diffuse_cross_displacement_dataset, 0.0
             )
         if atom_diffusion_sampler is not None:
             diffused_cross_edge_type = CrossEdgeTypeDataset(
@@ -609,11 +639,15 @@ class CrossDataset(DictDataset):
             diffused_cross_edge_type = cross_edgetype_dataset
         holo_coord_dataset = PrependAndAppend(holo_coord_dataset, 0.0, 0.0)
         holo_distance_dataset = PrependAndAppend2DDataset(holo_distance_dataset, 0.0)
+        holo_displacement_dataset = PrependAndAppend3DDataset(holo_displacement_dataset, 0.0)
         holo_coord_pocket_dataset = PrependAndAppend(
             holo_coord_pocket_dataset, 0.0, 0.0
         )
         holo_cross_distance_dataset = PrependAndAppend2DDataset(
             holo_cross_distance_dataset, 0.0
+        )
+        holo_cross_displacement_dataset = PrependAndAppend3DDataset(
+            holo_cross_displacement_dataset, 0.0
         )
         holo_center_coordinates = FromNumpyDataset(holo_center_coordinates)
 
@@ -635,10 +669,17 @@ class CrossDataset(DictDataset):
                         distance_dataset,
                         pad_idx=0,
                     ), #Corresponding distance matrix of the mol_src_coord
+                    "mol_src_displacement": RightPadDataset3D(
+                        displacement_dataset,
+                        pad_idx=0,
+                    ), #Displacement matrix (n,n,3) of the mol_src_coord
                     "mol_holo_coord": RightPadDatasetCoord(holo_coord_dataset, pad_idx=0),
                     "mol_holo_distance": RightPadDataset2D(
                         holo_distance_dataset, pad_idx=0
                     ),#Holo coordinate and distance should be used as label (true coordinate in complex but normalized by pocket center)
+                    "mol_holo_displacement": RightPadDataset3D(
+                        holo_displacement_dataset, pad_idx=0
+                    ), #Displacement matrix (n,n,3) of the mol_holo_coord
                     "pocket_tokens": RightPadDataset(
                         src_pocket_dataset,
                         pad_idx=self.pocket_dictionary.pad,
@@ -651,6 +692,10 @@ class CrossDataset(DictDataset):
                         distance_pocket_dataset,
                         pad_idx=0,
                     ),
+                    "pocket_displacement": RightPadDataset3D(
+                        displacement_pocket_dataset,
+                        pad_idx=0,
+                    ),
                     "pocket_src_coord": RightPadDatasetCoord(
                         coord_pocket_dataset,
                         pad_idx=0,
@@ -660,6 +705,9 @@ class CrossDataset(DictDataset):
                     ), #This is the normalized pocket_src_coord 
                     "cross_distance": RightPadDatasetCross2D(
                         holo_cross_distance_dataset, pad_idx=0
+                    ),
+                    "cross_displacement": RightPadDatasetCross3D(
+                        holo_cross_displacement_dataset, pad_idx=0
                     ),
                     "cross_edge_type": RightPadDatasetCross2D(
                         cross_edgetype_dataset, pad_idx=0
@@ -700,6 +748,9 @@ class CrossDataset(DictDataset):
                     "pocket_distance": RightPadDataset2D(
                         distance_pocket_diffused_dataset, pad_idx=0
                     ),
+                    "pocket_displacement": RightPadDataset3D(
+                        displacement_pocket_diffused_dataset, pad_idx=0
+                    ),
                     "pocket_diffuse_time": pocket_time_dataset,
                     "pocket_diffuse_score": RightPadDatasetCoord(
                         pocket_score_dataset, pad_idx=0
@@ -716,6 +767,9 @@ class CrossDataset(DictDataset):
                     ),
                     "mol_holo_distance": RightPadDataset2D(
                         holo_distance_diffused, pad_idx=0
+                    ),
+                    "mol_holo_displacement": RightPadDataset3D(
+                        holo_displacement_diffused, pad_idx=0
                     ),
                     "mol_diffuse_time": holo_time_dataset,
                     "mol_diffuse_trrot_score": RightPadDatasetCoord(
@@ -736,6 +790,9 @@ class CrossDataset(DictDataset):
             return_dict["diffused"].update(
                 {   "cross_distance": RightPadDatasetCross2D(
                         diffuse_cross_distance_dataset, pad_idx=0
+                    ),
+                    "cross_displacement": RightPadDatasetCross3D(
+                        diffuse_cross_displacement_dataset, pad_idx=0
                     ),
                     "cross_edge_type": RightPadDatasetCross2D(
                         diffused_cross_edge_type, pad_idx=0

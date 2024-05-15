@@ -24,6 +24,7 @@ args = {
         'warmup': None,
         'perturbation_loss': True, #If include perturbation noise
         'trrot_loss':True, #If include trrot noise
+        'mode': 'train', #Can be 'train', 'debug', 'test' mode
     },
     'model':
     {
@@ -82,6 +83,7 @@ def parse_args():
     parser.add_argument("--report_every",type=int,default=None)
     parser.add_argument("--valid_first_n",type=int,default=None)
     parser.add_argument("--eval_every_n_epoches",type=int,default=None)
+    parser.add_argument("--mode",type=str,default=None,help = "Can be 'train', 'debug', 'test' mode")
 
     ### Diffusion settings
     parser.add_argument("--tr_sigma_min",type = float,default = 1e-5)

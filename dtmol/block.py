@@ -18,6 +18,21 @@ def gaussian(x, mean, std):
 def modulate(x, shift, scale):
     return x * (1 + scale.unsqueeze(1)) + shift.unsqueeze(1)
 
+def displacement(x:torch.tensor, y:torch.tensor = None):
+    """Get the displacement matrix (relative position) of given x and y
+    Args:
+        x: (batch, n, 3) the coordinate matrix of the first node.
+        y: (batch, m, 3) the coordinate matrix of the second node.
+    Returns:
+        displacement: (batch, n, m, 3) the displacement matrix.
+    """
+    if y is None:
+        y = x
+    x = x.unsqueeze(2)
+    y = y.unsqueeze(1)
+    displacement = x - y
+    return displacement
+
 class Mlp(nn.Module):
     """ A simple 2 layer perceptron with GELU activation and dropout.
     """
@@ -236,7 +251,7 @@ class DiTLayer(nn.Module):
     def forward(
         self,
         x: torch.Tensor,
-        c: torch.Tensor,
+        t: torch.Tensor,
         attn_bias: Optional[torch.Tensor] = None,
         padding_mask: Optional[torch.Tensor] = None,
         return_attn: bool=False,
@@ -244,10 +259,14 @@ class DiTLayer(nn.Module):
         """
         LayerNorm is applied either before or after the self-attention/ffn
         modules similar to the original Transformer implementation.
+        Args:
+            x: torch.Tensor, the input embedding tensor with shape [B, N, D].
+            t: torch.Tensor, the timestep embedding tensor with shape [B, N, D].
+            c: torch.Tensor, the coordinates tensor with shape [B, N, 3].
+            attn_bias: torch.Tensor, the attention bias tensor with shape [B, N, N].
         """
-        shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.adaLN_modulation(c).chunk(6, dim=1)
+        shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.adaLN_modulation(t).chunk(6, dim=1)
         x = modulate(self.norm1(x), shift_msa, scale_msa)
-        # new added
         x = self.self_attn(
             query=x,
             key_padding_mask=padding_mask,
@@ -262,6 +281,7 @@ class DiTLayer(nn.Module):
             return x
         else:
             return x, attn_weights, attn_probs
+
 
 class DiTFinalLayer(nn.Module):
     """
@@ -487,6 +507,7 @@ class TransformerDecoderWithPair(nn.Module):
     def forward(
         self,
         emb: torch.Tensor,
+        coordinates: torch.Tensor,
         t: torch.Tensor,
         attn_mask: Optional[torch.Tensor] = None,
         padding_mask: Optional[torch.Tensor] = None,
@@ -494,6 +515,7 @@ class TransformerDecoderWithPair(nn.Module):
 
         bsz = emb.size(0)
         seq_len = emb.size(1)
+        d = coordinates.size(-1)
         x = self.emb_layer_norm(emb)
         x = F.dropout(x, p=self.emb_dropout, training=self.training)
         t = self.t_embedder(t)
@@ -514,14 +536,25 @@ class TransformerDecoderWithPair(nn.Module):
                 attn_mask = attn_mask.view(-1, seq_len, seq_len)
                 padding_mask = None
             return attn_mask, padding_mask
-
         assert attn_mask is not None
         attn_mask, padding_mask = fill_attn_mask(attn_mask, padding_mask)
+        coordinates = coordinates.repeat(self.attention_heads, 1, 1).view(self.attention_heads, bsz, seq_len, d).transpose(0,1).contiguous() # [bsz, head, seq_len, d]
         for i in range(len(self.layers)):
-            x, attn_mask, _ = self.layers[i](
+            x, attn_mask,attn_prob = self.layers[i](
                 x,t, padding_mask=padding_mask, attn_bias=attn_mask, return_attn=True
             )
-        x = self.final_layer(x, t)
+            # print("Attention mask shape: ", attn_mask.shape) # [bsz*head, seq_len, seq_len]
+            # print("Attention prob shape: ", attn_prob.shape) # [bsz*head, seq_len, seq_len]
+            # print("x shape: ", x.shape) # [bsz, seq_len, embed_dim]
+            attn_prob = attn_prob.view(bsz, self.attention_heads, seq_len, seq_len).contiguous() # [bsz, head, seq_len, seq_len]
+            
+            # SE(3)-equivariant branch
+            displacement_tensor = displacement(coordinates.view(bsz*self.attention_heads, seq_len, d)).view(bsz, self.attention_heads, seq_len, seq_len, d) # [bsz, head, seq_len, seq_len, d]
+            displacement_tensor = torch.einsum("bhsi,bhsid->bhsd", attn_prob, displacement_tensor) # [bsz, head, seq_len, d]
+            coordinates = coordinates + displacement_tensor # [bsz, head, seq_len, d]
+
+        x = self.final_layer(x, t) # [bsz, seq_len, embed_dim]
+
         def norm_loss(x, eps=1e-10, tolerance=1.0):
             x = x.float()
             max_norm = x.shape[-1] ** 0.5
@@ -559,7 +592,7 @@ class TransformerDecoderWithPair(nn.Module):
         if self.final_head_layer_norm is not None:
             delta_pair_repr = self.final_head_layer_norm(delta_pair_repr)
 
-        return x, attn_mask, delta_pair_repr, x_norm, delta_pair_repr_norm
+        return x, attn_mask, delta_pair_repr, x_norm, delta_pair_repr_norm, displacement_tensor
 
 
 class MaskLMHead(nn.Module):
@@ -623,23 +656,36 @@ class DiffusionHead(nn.Module):
         self,
         input_dim,
         out_dim,
+        input_dim2,
         activation_fn,
         hidden_dim=None,
+        coord_dim=3,
     ):
         super().__init__()
         hidden_dim = input_dim if not hidden_dim else hidden_dim
+        assert out_dim % coord_dim == 0, "Output dimension must be divisible by coord_dim"
+        self.out_dim = out_dim
         self.linear1 = nn.Linear(input_dim, hidden_dim)
         self.linear2 = nn.Linear(hidden_dim, out_dim)
+        self.linear3 = nn.Linear(input_dim2, out_dim//coord_dim, bias = False)
         self.activation_fn = get_activation_fn(activation_fn)()
         self.layer_norm = LayerNorm(hidden_dim)
         self.mse_loss = nn.MSELoss(reduction="none")
 
-    def forward(self, x):
+    def forward(self, x, y):
+        """
+        x: the output of the embedding with shape [B, N, D]
+        y: the displacement tensor with shape [B, H, N, 3]
+        """
         x = self.linear1(x)
         x = self.activation_fn(x)
         x = self.layer_norm(x)
-        x = self.linear2(x)
-        return x
+        x = self.linear2(x) # [B, N, O]
+        y = y.transpose(1, 2).transpose(2, 3) # [B, N, 3, H]
+        y = self.linear3(y) # [B, N, 3, O/3]
+        bsz, n, _, _ = y.size()
+        y = y.reshape(bsz,n,self.out_dim) # [B, N, O]
+        return x*y
 
     def loss(self, output, score, norm, padding_mask = None, norm_weighted = False):
         loss = self.mse_loss(output, score)
@@ -667,27 +713,40 @@ class DiffusionPoolHead(nn.Module):
     def __init__(
         self,
         input_dim,
+        input_dim2,
         out_dim,
         activation_fn,
         hidden_dim=None,
         dropout = 0.1,
+        coord_dim = 3,
     ):
         super().__init__()
         hidden_dim = input_dim if not hidden_dim else hidden_dim
+        assert out_dim % coord_dim == 0, "Output dimension must be divisible by coord_dim"
+        self.out_dim = out_dim
         self.linear1 = nn.Linear(input_dim, hidden_dim)
         self.out_proj = nn.Linear(hidden_dim, out_dim)
+        self.out_proj2 = nn.Linear(input_dim2, out_dim//coord_dim, bias = False)
         self.dropout = nn.Dropout(p=dropout)
         self.activation_fn = get_activation_fn(activation_fn)()
         self.mse_loss = nn.MSELoss(reduction="none")
 
-    def forward(self, x):
+    def forward(self, x ,y):
+        """
+        x: the output of the embedding with shape [B, N, D]
+        y: the displacement tensor with shape [B, H, N, 3]
+        """
         x = x[:, 0, :]  # take <s> token (equiv. to [CLS])
+        y = y[:,:,0,:] # [B, H, 3]
         x = self.dropout(x)
         x = self.linear1(x)
         x = self.activation_fn(x)
         x = self.dropout(x)
         x = self.out_proj(x)
-        return x
+        y = y.transpose(1, 2) # [B, 3, H]
+        y = self.out_proj2(y) # [B, 3, O/3]
+        y = y.reshape(-1,self.out_dim) # [B, O]
+        return x*y
 
     def loss(self, output, score, norm, norm_weighted = False):
         loss = self.mse_loss(output, score)
