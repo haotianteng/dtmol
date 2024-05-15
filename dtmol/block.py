@@ -18,7 +18,7 @@ def gaussian(x, mean, std):
 def modulate(x, shift, scale):
     return x * (1 + scale.unsqueeze(1)) + shift.unsqueeze(1)
 
-def displacement(x:torch.tensor, y:torch.tensor = None):
+def displacement(x:torch.tensor, y:torch.tensor = None, unit_vector:bool = True):
     """Get the displacement matrix (relative position) of given x and y
     Args:
         x: (batch, n, 3) the coordinate matrix of the first node.
@@ -31,6 +31,8 @@ def displacement(x:torch.tensor, y:torch.tensor = None):
     x = x.unsqueeze(2)
     y = y.unsqueeze(1)
     displacement = x - y
+    if unit_vector:
+        displacement = displacement / (torch.norm(displacement, dim=-1, keepdim=True) + 1e-5)
     return displacement
 
 class Mlp(nn.Module):
@@ -239,6 +241,12 @@ class DiTLayer(nn.Module):
             dropout=attention_dropout,
         )
 
+        self.disp_attn = SelfMultiheadAttention(
+            self.embed_dim,
+            num_heads=attention_heads,
+            dropout=attention_dropout,
+        )
+
         # DiT block with adaptive layer norm zero (adaLN-Zero) conditioning.
         self.norm1 = nn.LayerNorm(embed_dim, elementwise_affine=False, eps=1e-6)
         self.norm2 = nn.LayerNorm(embed_dim, elementwise_affine=False, eps=1e-6)
@@ -275,12 +283,18 @@ class DiTLayer(nn.Module):
         )
         if return_attn:
             x, attn_weights, attn_probs = x
+            _,attn_weights_disp,_ = self.disp_attn(query=x,
+                                                   key_padding_mask=padding_mask,
+                                                   attn_bias=attn_bias,
+                                                   return_attn=True)
         x = x + gate_msa.unsqueeze(1) * x
         x = x + gate_mlp.unsqueeze(1) * self.mlp(modulate(self.norm2(x), shift_mlp, scale_mlp))
+    
         if not return_attn:
             return x
         else:
-            return x, attn_weights, attn_probs
+            
+            return x, attn_weights, attn_probs, attn_weights_disp
 
 
 class DiTFinalLayer(nn.Module):
@@ -459,6 +473,7 @@ class TransformerDecoderWithPair(nn.Module):
         self.attention_heads = attention_heads
         self.emb_layer_norm = LayerNorm(self.embed_dim)
         self.final_layer = DiTFinalLayer(embed_dim, embed_dim)
+        self.sigmoid = nn.Sigmoid()
         if not no_final_head_layer_norm:
             self.final_head_layer_norm = LayerNorm(attention_heads)
         else:
@@ -540,17 +555,23 @@ class TransformerDecoderWithPair(nn.Module):
         attn_mask, padding_mask = fill_attn_mask(attn_mask, padding_mask)
         coordinates = coordinates.repeat(self.attention_heads, 1, 1).view(self.attention_heads, bsz, seq_len, d).transpose(0,1).contiguous() # [bsz, head, seq_len, d]
         for i in range(len(self.layers)):
-            x, attn_mask,attn_prob = self.layers[i](
+            x, attn_mask,_,attn_disp = self.layers[i](
                 x,t, padding_mask=padding_mask, attn_bias=attn_mask, return_attn=True
             )
             # print("Attention mask shape: ", attn_mask.shape) # [bsz*head, seq_len, seq_len]
             # print("Attention prob shape: ", attn_prob.shape) # [bsz*head, seq_len, seq_len]
             # print("x shape: ", x.shape) # [bsz, seq_len, embed_dim]
-            attn_prob = attn_prob.view(bsz, self.attention_heads, seq_len, seq_len).contiguous() # [bsz, head, seq_len, seq_len]
+            attn_disp = attn_disp.view(bsz, self.attention_heads, seq_len, seq_len).contiguous() # [bsz, head, seq_len, seq_len]
+            attn_disp = self.sigmoid(attn_disp) - 0.5
+            # attn_disp = nn.SiLU
+            #project attn_mask with self.atten_proj
+            # attn_disp = self.atten_proj(attn_mask.permute(0,2,3,1)).permute(0,3,1,2) # [bsz, head, seq_len, seq_len]
+            
             
             # SE(3)-equivariant branch
             displacement_tensor = displacement(coordinates.view(bsz*self.attention_heads, seq_len, d)).view(bsz, self.attention_heads, seq_len, seq_len, d) # [bsz, head, seq_len, seq_len, d]
-            displacement_tensor = torch.einsum("bhsi,bhsid->bhsd", attn_prob, displacement_tensor) # [bsz, head, seq_len, d]
+            displacement_tensor = attn_disp.unsqueeze(-1) * displacement_tensor # [bsz, head, seq_len, seq_len, d]
+            displacement_tensor = displacement_tensor.mean(dim=-2) # [bsz, seq_len, seq_len, d]
             coordinates = coordinates + displacement_tensor # [bsz, head, seq_len, d]
 
         x = self.final_layer(x, t) # [bsz, seq_len, embed_dim]
@@ -667,6 +688,7 @@ class DiffusionHead(nn.Module):
         self.out_dim = out_dim
         self.linear1 = nn.Linear(input_dim, hidden_dim)
         self.linear2 = nn.Linear(hidden_dim, out_dim)
+        self.x_gate = nn.Sigmoid()
         self.linear3 = nn.Linear(input_dim2, out_dim//coord_dim, bias = False)
         self.activation_fn = get_activation_fn(activation_fn)()
         self.layer_norm = LayerNorm(hidden_dim)
@@ -685,7 +707,7 @@ class DiffusionHead(nn.Module):
         y = self.linear3(y) # [B, N, 3, O/3]
         bsz, n, _, _ = y.size()
         y = y.reshape(bsz,n,self.out_dim) # [B, N, O]
-        return x*y
+        return self.x_gate(x)*y
 
     def loss(self, output, score, norm, padding_mask = None, norm_weighted = False):
         loss = self.mse_loss(output, score)
@@ -726,6 +748,7 @@ class DiffusionPoolHead(nn.Module):
         self.out_dim = out_dim
         self.linear1 = nn.Linear(input_dim, hidden_dim)
         self.out_proj = nn.Linear(hidden_dim, out_dim)
+        self.x_gate = nn.Sigmoid()
         self.out_proj2 = nn.Linear(input_dim2, out_dim//coord_dim, bias = False)
         self.dropout = nn.Dropout(p=dropout)
         self.activation_fn = get_activation_fn(activation_fn)()
@@ -746,7 +769,7 @@ class DiffusionPoolHead(nn.Module):
         y = y.transpose(1, 2) # [B, 3, H]
         y = self.out_proj2(y) # [B, 3, O/3]
         y = y.reshape(-1,self.out_dim) # [B, O]
-        return x*y
+        return self.x_gate(x)*y
 
     def loss(self, output, score, norm, norm_weighted = False):
         loss = self.mse_loss(output, score)
