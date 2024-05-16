@@ -564,8 +564,9 @@ class TransformerDecoderWithPair(nn.Module):
             attn_disp = attn_disp.view(bsz, self.attention_heads, seq_len, seq_len).contiguous() # [bsz, head, seq_len, seq_len]
             normalizer = torch.sqrt(torch.sum(~torch.isinf(attn_disp),axis = -1))
             # fill -inf with 0
-            attn_disp[torch.isinf(attn_disp)] = 0 
+            inf_mask = torch.isinf(attn_disp)
             attn_disp = 2*(self.sigmoid(attn_disp) - 0.5) # -1 to +1
+            attn_disp[inf_mask] = 0
             # attn_disp = nn.SiLU
             #project attn_mask with self.atten_proj
             # attn_disp = self.atten_proj(attn_mask.permute(0,2,3,1)).permute(0,3,1,2) # [bsz, head, seq_len, seq_len]
@@ -573,6 +574,7 @@ class TransformerDecoderWithPair(nn.Module):
             
             # SE(3)-equivariant branch
             displacement_tensor = displacement(coordinates.view(bsz*self.attention_heads, seq_len, d)).view(bsz, self.attention_heads, seq_len, seq_len, d) # [bsz, head, seq_len, seq_len, d]
+            displacement_tensor[torch.isinf(displacement_tensor)] = 0 # fill -inf caused by padding coordinates with 0
             displacement_tensor = attn_disp.unsqueeze(-1) * displacement_tensor # [bsz, head, seq_len, seq_len, d]
             # non_zero = (displacement)
             displacement_tensor = displacement_tensor.sum(dim=-2) # [bsz, head, seq_len, d]
