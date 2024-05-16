@@ -31,6 +31,8 @@ def displacement(x:torch.tensor, y:torch.tensor = None, unit_vector:bool = True)
     x = x.unsqueeze(2)
     y = y.unsqueeze(1)
     displacement = x - y
+    displacement[torch.isinf(displacement)] = 0 # fill -inf caused by (padding coordinates - normal coordinates) with 0
+    displacement[torch.isnan(displacement)] = 0 # fill nan caused by (padding coordinates - padding coordinates) with 0        
     if unit_vector:
         displacement = displacement / (torch.norm(displacement, dim=-1, keepdim=True) + 1e-5)
     return displacement
@@ -574,7 +576,6 @@ class TransformerDecoderWithPair(nn.Module):
             
             # SE(3)-equivariant branch
             displacement_tensor = displacement(coordinates.view(bsz*self.attention_heads, seq_len, d)).view(bsz, self.attention_heads, seq_len, seq_len, d) # [bsz, head, seq_len, seq_len, d]
-            displacement_tensor[torch.isinf(displacement_tensor)] = 0 # fill -inf caused by padding coordinates with 0
             displacement_tensor = attn_disp.unsqueeze(-1) * displacement_tensor # [bsz, head, seq_len, seq_len, d]
             # non_zero = (displacement)
             displacement_tensor = displacement_tensor.sum(dim=-2) # [bsz, head, seq_len, d]
