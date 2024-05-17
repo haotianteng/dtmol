@@ -82,6 +82,9 @@ class ScoreNetwork(nn.ModuleDict):
         prot_sampler.set_T(T)
         mol_coord = batch['net_input']['mol_src_coord']
         pocket_coord = batch['net_input']['pocket_holo_coord']
+        #fill inf with 0
+        mol_coord[torch.isinf(mol_coord)] = 0
+        pocket_coord[torch.isinf(pocket_coord)] = 0
         n_mole = mol_coord.size(1)
         coord = torch.cat([mol_coord,pocket_coord],dim=1)
         ### debugging code ###
