@@ -10,9 +10,9 @@ args = {
     'train':{
         'learning_rate':1e-3,
         'start_lr_factor': 1e-3,
-        'lr_scheduler': 'LinaerLR',
+        'lr_scheduler': 'CosineAnnealingWarmRestarts',
         'lr_warmup': 5,
-        'epoches': 100,
+        'epoches': 500,
         'report_every': 100,
         'valid_first_n': 10,
         'eval_every_n_epoches': 5,
@@ -20,7 +20,7 @@ args = {
         'norm_weighted': False, # if the perturbation loss is weighted by normalization factor
         'use_wandb': True,
         'retrain': None,
-        'dropout': 0.0,
+        'dropout': 0.1,
         'warmup': None,
         'perturbation_loss': True, #If include perturbation noise
         'trrot_loss':True, #If include trrot noise
@@ -28,9 +28,10 @@ args = {
     },
     'model':
     {
-        'dropout':0.0,
-        'trrot_weight': 1.0,
-        'pert_weight': 1.0,
+        'dropout':0.1,
+        'trrot_weight': 1.0, #Currently have no effect
+        'pert_weight': 1.0, #Currently have no effect
+        'independent_se3_attention': True,
         },
     'dataset':
     {
@@ -69,7 +70,6 @@ def parse_args():
                         help="This setting will override the fine_tune_pretrain setting, will fine tune the encoder after warmup epochs")
     parser.add_argument("--no_wandb",action='store_false',dest='use_wandb')
     parser.add_argument("--retrain",type = str,default=None)
-    parser.add_argument("--dropout",type=float,default=0.0)
     parser.add_argument("--learning_rate",type=float,default=None)
     parser.add_argument("--start_lr_factor",type=float,default=None)
     parser.add_argument("--lr_scheduler",type=str,default=None,
@@ -84,6 +84,13 @@ def parse_args():
     parser.add_argument("--valid_first_n",type=int,default=None)
     parser.add_argument("--eval_every_n_epoches",type=int,default=None)
     parser.add_argument("--mode",type=str,default=None,help = "Can be 'train', 'debug', 'test' mode")
+
+    ### Model settings
+    parser.add_argument("--dropout",type=float,default=0.0)
+    parser.add_argument("--trrot_weight",type=float,default=1.0)
+    parser.add_argument("--pert_weight",type=float,default=1.0)
+    parser.add_argument("--share_attention",action='store_false',dest='independent_se3_attention',
+                        help = "Use the same attention for the coordinates and the features")
 
     ### Diffusion settings
     parser.add_argument("--tr_sigma_min",type = float,default = 1e-5)

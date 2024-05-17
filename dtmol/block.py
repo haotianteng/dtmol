@@ -226,6 +226,7 @@ class DiTLayer(nn.Module):
         attention_dropout: float = 0.1,
         activation_dropout: float = 0.0,
         activation_fn: str = "gelu",
+        independent_SE3_attention: bool = True,
     ) -> None:
         super().__init__()
 
@@ -233,7 +234,7 @@ class DiTLayer(nn.Module):
         self.embed_dim = embed_dim
         self.attention_heads = attention_heads
         self.attention_dropout = attention_dropout
-
+        self.indp_attn = independent_SE3_attention
         self.dropout = dropout
         self.activation_dropout = activation_dropout
         self.activation_fn = get_activation_fn(activation_fn)
@@ -242,12 +243,12 @@ class DiTLayer(nn.Module):
             num_heads=attention_heads,
             dropout=attention_dropout,
         )
-
-        self.disp_attn = SelfMultiheadAttention(
-            self.embed_dim,
-            num_heads=attention_heads,
-            dropout=attention_dropout,
-        )
+        if self.indp_attn:
+            self.disp_attn = SelfMultiheadAttention(
+                self.embed_dim,
+                num_heads=attention_heads,
+                dropout=attention_dropout,
+            )
 
         # DiT block with adaptive layer norm zero (adaLN-Zero) conditioning.
         self.norm1 = nn.LayerNorm(embed_dim, elementwise_affine=False, eps=1e-6)
@@ -285,10 +286,13 @@ class DiTLayer(nn.Module):
         )
         if return_attn:
             x, attn_weights, attn_probs = x
-            _,attn_weights_disp,_ = self.disp_attn(query=x,
-                                                   key_padding_mask=padding_mask,
-                                                   attn_bias=attn_bias,
-                                                   return_attn=True)
+            if self.indp_attn:
+                _,attn_weights_disp,_ = self.disp_attn(query=x,
+                                                       key_padding_mask=padding_mask,
+                                                       attn_bias=attn_bias,
+                                                       return_attn=True)
+            else:
+                attn_weights_disp = attn_weights
         x = x + gate_msa.unsqueeze(1) * x
         x = x + gate_mlp.unsqueeze(1) * self.mlp(modulate(self.norm2(x), shift_mlp, scale_mlp))
     
@@ -455,6 +459,7 @@ class TransformerDecoderWithPair(nn.Module):
         embed_dim: int = 768,
         ffn_embed_dim: int = 3072,
         attention_heads: int = 8,
+        independent_SE3_attention: bool = True,
         emb_dropout: float = 0.1,
         dropout: float = 0.1,
         attention_dropout: float = 0.1,
@@ -486,6 +491,7 @@ class TransformerDecoderWithPair(nn.Module):
                     embed_dim=self.embed_dim,
                     ffn_embed_dim=ffn_embed_dim,
                     attention_heads=attention_heads,
+                    independent_SE3_attention=independent_SE3_attention,
                     dropout=dropout,
                     attention_dropout=attention_dropout,
                     activation_dropout=activation_dropout,

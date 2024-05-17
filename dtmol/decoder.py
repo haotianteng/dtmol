@@ -24,6 +24,7 @@ def base_architecture(args):
     args.tr_loss = getattr(args, "translation_loss", -1.0)
     args.g_loss = getattr(args, "g_noise_loss", -1.0)
     args.max_diffusion_time = getattr(args, "max_diffusion_time", 5000)
+    args.independent_se3_attention = getattr(args, "independent_se3_attention", True)
 
 class Decoder(nn.Module):
     def __init__(self, config, dictionary) -> None:
@@ -45,7 +46,7 @@ class Decoder(nn.Module):
             max_seq_len=config.max_seq_len,
             post_ln=config.post_ln,
             max_time = config.max_diffusion_time,
-
+            independent_SE3_attention = config.independent_se3_attention
         )
         self.gbf_proj = NonLinearHead(
             input_dim=config.n_gaussian_basis,
