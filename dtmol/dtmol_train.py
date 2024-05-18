@@ -311,7 +311,7 @@ def worker(idx,world_size,args):
     warmup_scheduler = optim.lr_scheduler.ConstantLR(optimizer,
                                                            factor = config.TRAIN['start_lr_factor'],
                                                            total_iters=config.TRAIN['lr_warmup'])
-    if config.TRAIN['lr_scheduler'] == "LinaerLR":
+    if config.TRAIN['lr_scheduler'] == "LinearLR":
         schedular = optim.lr_scheduler.LinearLR(optimizer, 
                                                       start_factor = config.TRAIN['start_lr_factor'],
                                                       total_iters = config.TRAIN['epoches'],
