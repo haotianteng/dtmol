@@ -15,7 +15,7 @@ def update_distance_matrix(coor,mole_padding,prot_padding):
     dist[padding_mask] = 0
     return dist
 
-def _reverse_sampling(coord, scores, rev_sampler, padding, t):
+def _reverse_sampling(coord, scores, rev_sampler, padding, t, stochastic=False):
     """
     Reverse the sampling process of the diffusion process
     coord: torch.tensor, shape (batch, n_atoms, 3) The coordinates of the atoms
@@ -24,7 +24,7 @@ def _reverse_sampling(coord, scores, rev_sampler, padding, t):
     padding: torch.tensor, shape (batch, n_mole+n_prot) The padding mask for the atoms
     t: int The time step of the reverse sampling
     """
-    coor = rev_sampler.reverse_dt(coord, t, scores)
+    coor = rev_sampler.reverse_dt(coord, t, scores, stochastic=stochastic)
     if not torch.is_tensor(coor):
         coor = torch.tensor(coor,device=coord.device,dtype=coord.dtype)
     else:
@@ -32,12 +32,12 @@ def _reverse_sampling(coord, scores, rev_sampler, padding, t):
     coor[padding] = 0
     return coor
 
-def reverse_sampling(coord, score, mole_sampler, prot_sampler, mole_padding, prot_padding, t):
+def reverse_sampling(coord, score, mole_sampler, prot_sampler, mole_padding, prot_padding, t, stochastic=False):
     n_mole = mole_padding.size(1)
     mole_score = [score[:,0],score[:,1],score[:,2:n_mole+2]] # Translation score, rotation score, and the perturbation score
     prot_score = [score[:,n_mole+2:]] # Protein only has the perturbation score
-    coor_mole = _reverse_sampling(coord[:,:n_mole], mole_score, mole_sampler, mole_padding, t)
-    coor_prot = _reverse_sampling(coord[:,n_mole:], prot_score, prot_sampler, prot_padding, t)
+    coor_mole = _reverse_sampling(coord[:,:n_mole], mole_score, mole_sampler, mole_padding, t, stochastic=stochastic)
+    coor_prot = _reverse_sampling(coord[:,n_mole:], prot_score, prot_sampler, prot_padding, t, stochastic=stochastic)
     coor_padding = get_padding_mask(mole_padding,prot_padding)
     coor = torch.cat([coor_mole,coor_prot],dim=1)
     coor[coor_padding] = 0
@@ -57,12 +57,10 @@ def rmsd(coord, label, mole_padding, prot_padding):
     mole_padding = padding_mask[:,:n_mole]
     prot_padding = padding_mask[:,n_mole:]
     diff[padding_mask,:] = 0
-    diff = diff**2
-    diff = torch.sqrt(diff.sum(dim=-1))
-    diff_mole = diff[:,:n_mole].sum(dim=-1)/(~mole_padding).sum(dim=-1)
-    diff_prot = diff[:,n_mole:].sum(dim=-1)/(~prot_padding).sum(dim=-1)
-    diff_mole = diff_mole.mean()
-    diff_prot = diff_prot.mean()
+    diff = diff**2 # (batch_n, n_atoms, 3)
+    diff = torch.sqrt(diff.sum(dim=-1)) # (batch_n, n_atoms)
+    diff_mole = diff[:,:n_mole].sum(dim=-1)/(~mole_padding).sum(dim=-1) # (batch_n)
+    diff_prot = diff[:,n_mole:].sum(dim=-1)/(~prot_padding).sum(dim=-1) # (batch_n)
     return diff_mole, diff_prot
 
 if __name__ == "__main__":

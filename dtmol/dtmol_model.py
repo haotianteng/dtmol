@@ -74,7 +74,7 @@ class ScoreNetwork(nn.ModuleDict):
                 "src_coord": batch['net_input']['mol_src_coord'],
                 "src_edge_type": batch['net_input']['mol_edge_type']}
 
-    def eval_once(self,batch,rev_sampler,T = 20):
+    def eval_once(self,batch,rev_sampler,T = 20, stochastic = False):
         mole_sampler = rev_sampler['molecule']
         prot_sampler = rev_sampler['protein']
         orig_T = mole_sampler.T
@@ -97,8 +97,9 @@ class ScoreNetwork(nn.ModuleDict):
                                               mole_sampler=mole_sampler,
                                               prot_sampler=prot_sampler, 
                                               mole_padding=mole_padding, 
-                                              prot_padding=prot_padding, 
-                                              t=i)
+                                              prot_padding=prot_padding,
+                                              t=i,
+                                              stochastic = stochastic,)
             batch['net_input']['mol_src_coord'] = coord[:,:n_mole,:]
             batch['net_input']['src_coord'] = coord[:,n_mole:,:]
             batch['net_input']['mol_src_distance'] = distance[:,:n_mole,:n_mole]

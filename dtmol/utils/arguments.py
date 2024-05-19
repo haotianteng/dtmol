@@ -25,6 +25,8 @@ args = {
         'perturbation_loss': True, #If include perturbation noise
         'trrot_loss':True, #If include trrot noise
         'mode': 'train', #Can be 'train', 'debug', 'test' mode
+        'max_reverse_diffusion_time': 20, #The maximum diffusion time for reverse diffusion
+        'stochastic_reverse_sampling': False, #If use stochastic sampling when doing evaluation
     },
     'model':
     {
@@ -85,6 +87,10 @@ def parse_args():
     parser.add_argument("--valid_first_n",type=int,default=None)
     parser.add_argument("--eval_every_n_epoches",type=int,default=None)
     parser.add_argument("--mode",type=str,default=None,help = "Can be 'train', 'debug', 'test' mode")
+    parser.add_argument("--max_reverse_diffusion_time",type=int,default=None,
+                        help = "The maximum diffusion time for reverse diffusion, default is 20.")
+    parser.add_argument("--stochastic_reverse_sampling",action='store_true',dest='stochastic_reverse_sampling',
+                        help = "If use stochastic sampling when doing evaluation")
 
     ### Model settings
     parser.add_argument("--dropout",type=float,default=0.0)

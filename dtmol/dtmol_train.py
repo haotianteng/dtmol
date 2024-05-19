@@ -61,10 +61,11 @@ class DiffusionTrainer(Trainer):
                 mole_rmsds,prot_rmsds = [],[]
                 for eval_i,eval_batch in enumerate(self.eval_ds):
                     mole_rmsd,prot_rmsd = self.eval_step(eval_batch)
-                    mole_rmsd,prot_rmsd = mole_rmsd.item(),prot_rmsd.item()
-                    mole_rmsds.append(mole_rmsd)
-                    prot_rmsds.append(prot_rmsd)
-                    msg = f"Eval {eval_i}/{len(self.eval_ds)}: Mole RMSD {mole_rmsd:.4f}, Prot RMSD {prot_rmsd:.4f}"
+                    mole_rmsd_mean,prot_rmsd_mean = mole_rmsd.mean().item(),prot_rmsd.mean().item()
+                    mole_rmsd_std,prot_rmsd_std = mole_rmsd.std().item(),prot_rmsd.std().item()
+                    mole_rmsds += mole_rmsd.tolist()
+                    prot_rmsds += prot_rmsd.tolist()
+                    msg = f"Eval {eval_i}/{len(self.eval_ds)}: Mole RMSD {mole_rmsd_mean:.2f} +- {mole_rmsd_std:.2f}, Prot RMSD {prot_rmsd_mean:.2f} +- {prot_rmsd_std:.2f}"
                     self.logger.info(msg)
                 mole_rmsd = np.mean(mole_rmsds)
                 prot_rmsd = np.mean(prot_rmsds)
@@ -171,9 +172,13 @@ class DiffusionTrainer(Trainer):
     def eval_step(self, batch):
         with torch.no_grad():
             if self.distributed:
-                coord,mole_padding,prot_padding = self.nets.module.eval_once(batch, self.sampler)
+                coord,mole_padding,prot_padding = self.nets.module.eval_once(batch, self.sampler, 
+                                                                            T = self.config.TRAIN['max_reverse_diffusion_time'],
+                                                                             stochastic=self.config.TRAIN['stochastic_reverse_sampling'])
             else:
-                coord,mole_padding,prot_padding = self.nets.eval_once(batch, self.sampler)
+                coord,mole_padding,prot_padding = self.nets.eval_once(batch, self.sampler, 
+                                                                      T = self.config.TRAIN['max_reverse_diffusion_time'],
+                                                                      stochastic=self.config.TRAIN['stochastic_reverse_sampling'])
             label = self.get_label_coord(batch)
             mole_rmsd,prot_rmsd = self.rmsd(coord, label, mole_padding, prot_padding)
         return mole_rmsd, prot_rmsd

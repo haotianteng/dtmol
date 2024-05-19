@@ -94,10 +94,12 @@ class Decoder(nn.Module):
         full_coor = torch.cat([coor_molecule, coor_protein], dim=1)
         with torch.no_grad():
             # calculate the mean but ignore the inf values
-            inf_mask = torch.isinf(full_coor)
-            full_coor[inf_mask] = torch.nan
-            full_coor[:,0,:] = torch.nanmean(full_coor,dim=1) # Set the first coordinate to the center of the whole molecule (which will be used tp calculate the system score later)
-            full_coor[torch.isnan(full_coor)] = torch.inf
+            inf_mask = torch.isinf(coor_molecule)
+            coor_molecule[inf_mask] = torch.nan
+            full_coor[:,0,:] = torch.nanmean(coor_molecule,dim=1) 
+            # Set the first coordinate to the center of the ligand 
+            # (which will be used tp calculate the system score later), as intuitively the translation is the linear acceleration of the center of mass of the ligand
+            coor_molecule[torch.isnan(coor_molecule)] = torch.inf
         if padding_molecule is None:
             padding_molecule = torch.zeros(embd_molecule.size(0), embd_molecule.size(1),dtype = torch.bool).to(embd_molecule.device)
         if padding_protein is None:

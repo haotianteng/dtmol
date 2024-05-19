@@ -836,12 +836,13 @@ if __name__ == "__main__":
     x_compose, c_score, c_norm,c_ts = composed.sample(x_0)
 
     # Reverse the diffusion
-    reverse_T = 50
+    reverse_T = 20
     rot_sampler.set_T(reverse_T)
     g_sampler.set_T(reverse_T)
     tr_sampler.set_T(reverse_T)
     composed.set_T(reverse_T)
     dist_compose, dist_rot, dist_g, dist_tr = [],[],[],[]
+    reverse_with_stochastic = True
     def get_reverse_ts(t,T = 20, old_T = 5000):
         t = t * T // old_T
         return np.arange(t,-1,-1)
@@ -853,7 +854,10 @@ if __name__ == "__main__":
     x_rev = x_compose
     for t in ts_rev:
         dist_compose.append(average_distances(x_0,x_rev))
-        x_rev = composed.reverse_dt(x_rev,t,[c_score[:,0,:],c_score[:,1:-1,:],c_score[:,-1,:]])
+        x_rev = composed.reverse_dt(x_rev,
+                                    t,
+                                    [c_score[:,0,:],c_score[:,1:-1,:],c_score[:,-1,:]],
+                                    stochastic = reverse_with_stochastic)
         #here rotation score is already negative, so we need to negative it back.
     dist_compose.append(average_distances(x_0,x_rev))
 
@@ -861,14 +865,14 @@ if __name__ == "__main__":
     x_0rev = x_1
     for t in ts_rev:
         dist_rot.append(average_distances(x_0,x_0rev))
-        x_0rev = rot_sampler.reverse_dt(x_0rev,int(t),score)
+        x_0rev = rot_sampler.reverse_dt(x_0rev,int(t),score,stochastic=reverse_with_stochastic)
     dist_rot.append(average_distances(x_0,x_0rev))
     
     ts_rev = get_reverse_ts(g_ts,T = reverse_T,old_T = T)
     x_1rev = x_2
     for t in ts_rev:
         dist_g.append(average_distances(x_1,x_1rev))
-        x_1rev = g_sampler.reverse_dt(x_1rev,int(t),g_score)
+        x_1rev = g_sampler.reverse_dt(x_1rev,int(t),g_score,stochastic=reverse_with_stochastic)
         dist_g.append(average_distances(x_1,x_1rev))
     dist_g.append(average_distances(x_1,x_1rev))
 
@@ -876,7 +880,7 @@ if __name__ == "__main__":
     x_2rev = x_3
     for t in ts_rev:
         dist_tr.append(average_distances(x_2,x_2rev))
-        x_2rev = tr_sampler.reverse_dt(x_2rev,int(t),tr_score,stochastic=False)
+        x_2rev = tr_sampler.reverse_dt(x_2rev,int(t),tr_score,stochastic=reverse_with_stochastic)
     dist_tr.append(average_distances(x_2,x_2rev))
 
     _,_,_,c1_ts = composed1.sample(x_0)
