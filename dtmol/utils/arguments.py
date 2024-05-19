@@ -8,9 +8,9 @@ args = {
     'model_name': "bindingpose",
     'data_f': "/data/unimol_data/protein_ligand_binding_pose_prediction/",
     'train':{
-        'learning_rate':1e-3,
-        'start_lr_factor': 1e-3,
-        'lr_scheduler': 'CosineAnnealingWarmRestarts',
+        'learning_rate':1e-4,
+        'start_lr_factor': 1e-2,
+        'lr_scheduler': 'LinearLR',
         'lr_warmup': 5,
         'epoches': 500,
         'report_every': 100,
@@ -32,6 +32,7 @@ args = {
         'trrot_weight': 1.0, #Currently have no effect
         'pert_weight': 1.0, #Currently have no effect
         'independent_se3_attention': True,
+        'update_distance_matrix': False,
         },
     'dataset':
     {
@@ -91,6 +92,8 @@ def parse_args():
     parser.add_argument("--pert_weight",type=float,default=1.0)
     parser.add_argument("--share_attention",action='store_false',dest='independent_se3_attention',
                         help = "Use the same attention for the coordinates and the features")
+    parser.add_argument("--update_distance_matrix",action='store_true',
+                        help = "Update the distance matrix in the diffusion process")
 
     ### Diffusion settings
     parser.add_argument("--tr_sigma_min",type = float,default = 1e-5)

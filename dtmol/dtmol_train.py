@@ -217,6 +217,7 @@ def worker(idx,world_size,args):
     ##% Buildt the model
     dropout = args['model']['dropout']
     independent_se3_attention = args['model']['independent_se3_attention']
+    update_distance_matrix = args['model']['update_distance_matrix']
     MODEL_S = {'pretrain_folder': pretrain_f,
                   'load_pretrain': True,
                   'encoder': {'dropout':dropout,
@@ -229,7 +230,8 @@ def worker(idx,world_size,args):
                               'embed_dim':512,
                               'ffn_embed_dim':1024,
                               'attention_heads':64,
-                              'independent_se3_attention':independent_se3_attention}
+                              'independent_se3_attention':independent_se3_attention,
+                              'update_distance_matrix': update_distance_matrix}
                               }
 
     MODEL_L = {'pretrain_folder': pretrain_f,
@@ -244,7 +246,8 @@ def worker(idx,world_size,args):
                                 'embed_dim':512,
                                 'ffn_embed_dim':2048,
                                 'attention_heads':64,
-                                'independent_se3_attention':independent_se3_attention}
+                                'independent_se3_attention':independent_se3_attention,
+                                'update_distance_matrix': update_distance_matrix}
                                 }
 
     MODEL_XL = {'pretrain_folder': pretrain_f,
@@ -259,7 +262,8 @@ def worker(idx,world_size,args):
                                 'embed_dim':512,
                                 'ffn_embed_dim':3072,
                                 'attention_heads':64,
-                                'independent_se3_attention':independent_se3_attention}
+                                'independent_se3_attention':independent_se3_attention,
+                                'update_distance_matrix': update_distance_matrix}
                                 }
     if model_name.endswith("large"):
         config.MODEL = MODEL_L

@@ -37,6 +37,24 @@ def displacement(x:torch.tensor, y:torch.tensor = None, unit_vector:bool = True)
         displacement = displacement / (torch.norm(displacement, dim=-1, keepdim=True) + 1e-5)
     return displacement
 
+def get_distance_matrix(x:torch.tensor, y:torch.tensor = None):
+    """Get the distance matrix of given x and y
+    Args:
+        x: (batch, n, 3) the coordinate matrix of the first node.
+        y: (batch, m, 3) the coordinate matrix of the second node.
+    Returns:
+        distance: (batch, n, m) the distance matrix.
+    """
+    if y is None:
+        y = x
+    x = x.unsqueeze(2)
+    y = y.unsqueeze(1)
+    distance = x - y
+    mask = torch.isnan(distance) | torch.isinf(distance)
+    distance = distance.masked_fill(mask, 0)
+    distance = torch.norm(distance, dim=-1)
+    return distance
+
 class Mlp(nn.Module):
     """ A simple 2 layer perceptron with GELU activation and dropout.
     """
@@ -460,6 +478,7 @@ class TransformerDecoderWithPair(nn.Module):
         ffn_embed_dim: int = 3072,
         attention_heads: int = 8,
         independent_SE3_attention: bool = True,
+        update_distance_matrix: bool = True,
         emb_dropout: float = 0.1,
         dropout: float = 0.1,
         attention_dropout: float = 0.1,
@@ -478,6 +497,15 @@ class TransformerDecoderWithPair(nn.Module):
         self.embed_dim = embed_dim
         self.t_embedder = get_timestep_embedding_func(time_embedding_type, embed_dim, embedding_scale = max_time**1.5)
         self.attention_heads = attention_heads
+        self.update_distance_matrix = update_distance_matrix
+        if update_distance_matrix:
+            #create a projection for each layer to update the distance matrix
+            # self.dist_update_proj = nn.Linear(attention_heads, attention_heads, bias=False)
+            self.dist_update_proj = nn.ModuleList([
+                nn.Linear(attention_heads, attention_heads, bias=False)
+                for _ in range(encoder_layers)
+            ])
+            # Need to change in the feature move the gbj kernal from the outter network to here.
         self.emb_layer_norm = LayerNorm(self.embed_dim)
         self.final_layer = DiTFinalLayer(embed_dim, embed_dim)
         self.sigmoid = nn.Sigmoid()
@@ -562,6 +590,8 @@ class TransformerDecoderWithPair(nn.Module):
         assert attn_mask is not None
         attn_mask, padding_mask = fill_attn_mask(attn_mask, padding_mask)
         coordinates = coordinates.repeat(self.attention_heads, 1, 1).view(self.attention_heads, bsz, seq_len, d).transpose(0,1).contiguous() # [bsz, head, seq_len, d]
+        if self.update_distance_matrix:
+            old_distance_matrix = get_distance_matrix(coordinates.view(bsz*self.attention_heads, seq_len, d)) # [bsz*head, seq_len, seq_len]
         for i in range(len(self.layers)):
             x, attn_mask,_,attn_disp = self.layers[i](
                 x,t, padding_mask=padding_mask, attn_bias=attn_mask, return_attn=True
@@ -591,6 +621,16 @@ class TransformerDecoderWithPair(nn.Module):
 
             coordinates = coordinates + displacement_tensor # [bsz, head, seq_len, d]
 
+            if self.update_distance_matrix:
+                # update the attn_mask
+                distance_matrix = get_distance_matrix(coordinates.view(bsz*self.attention_heads, seq_len, d)) # [bsz*head, seq_len, seq_len]
+                delta_distance_matrix = distance_matrix - old_distance_matrix
+                old_distance_matrix = distance_matrix
+                delta_distance_matrix = delta_distance_matrix.view(bsz,-1,seq_len,seq_len).permute(0,2,3,1).contiguous() # [bsz, seq_len, seq_len, head]
+                delta_distance_matrix = self.dist_update_proj[i](delta_distance_matrix)
+                delta_distance_matrix = delta_distance_matrix.permute(0,3,1,2).contiguous() # [bsz, head, seq_len, seq_len]
+                attn_mask = attn_mask +  delta_distance_matrix.view(-1,seq_len,seq_len)# d exp{(-Ax+b)^2} = -2(Ax+b) exp{(-Ax+b)^2} dx
+            
         x = self.final_layer(x, t) # [bsz, seq_len, embed_dim]
 
         def norm_loss(x, eps=1e-10, tolerance=1.0):

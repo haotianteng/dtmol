@@ -25,6 +25,7 @@ def base_architecture(args):
     args.g_loss = getattr(args, "g_noise_loss", -1.0)
     args.max_diffusion_time = getattr(args, "max_diffusion_time", 5000)
     args.independent_se3_attention = getattr(args, "independent_se3_attention", True)
+    args.update_distance_matrix = getattr(args, "update_distance_matrix", False)
 
 class Decoder(nn.Module):
     def __init__(self, config, dictionary) -> None:
@@ -46,7 +47,8 @@ class Decoder(nn.Module):
             max_seq_len=config.max_seq_len,
             post_ln=config.post_ln,
             max_time = config.max_diffusion_time,
-            independent_SE3_attention = config.independent_se3_attention
+            independent_SE3_attention = config.independent_se3_attention,
+            update_distance_matrix=config.update_distance_matrix,
         )
         self.gbf_proj = NonLinearHead(
             input_dim=config.n_gaussian_basis,
@@ -90,7 +92,12 @@ class Decoder(nn.Module):
         """
         full_embd = torch.cat([embd_molecule, embd_protein], dim=1)
         full_coor = torch.cat([coor_molecule, coor_protein], dim=1)
-        full_coor[:,0,:] = torch.mean(coor_molecule,dim=1) # Set the first coordinate to the center of the molecule (which will be used tp calculate the system score later)
+        with torch.no_grad():
+            # calculate the mean but ignore the inf values
+            inf_mask = torch.isinf(full_coor)
+            full_coor[inf_mask] = torch.nan
+            full_coor[:,0,:] = torch.nanmean(full_coor,dim=1) # Set the first coordinate to the center of the whole molecule (which will be used tp calculate the system score later)
+            full_coor[torch.isnan(full_coor)] = torch.inf
         if padding_molecule is None:
             padding_molecule = torch.zeros(embd_molecule.size(0), embd_molecule.size(1),dtype = torch.bool).to(embd_molecule.device)
         if padding_protein is None:
