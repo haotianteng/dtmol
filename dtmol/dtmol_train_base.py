@@ -155,6 +155,20 @@ class Trainer(object):
         with open(record_file,'w+') as f:
             toml.dump(self.records,f)
 
+    def epoch_save(self,epoch):
+        if self._on_main_rank():
+            current_ckpt = 'ckpt-'+str(self.global_step)+ f"-epoch{epoch}" +'.pt'
+            model_file = os.path.join(self.save_folder,current_ckpt)
+            if not os.path.isdir(self.save_folder):
+                os.mkdir(self.save_folder)
+            if os.path.isfile(model_file):
+                os.remove(model_file)
+            if self.distributed:
+                net_dict = {key:net.state_dict() for key,net in self.nets.module.items()}
+            else:
+                net_dict = {key:net.state_dict() for key,net in self.nets.items()}
+            torch.save(net_dict,model_file) 
+
     def save(self):
         if self._on_main_rank():
             ckpt_file = os.path.join(self.save_folder,'checkpoint')

@@ -79,6 +79,7 @@ class DiffusionTrainer(Trainer):
                                    "prot_rmsd": wandb.Histogram(np.array(prot_rmsds)),
                                    "epoch": epoch_i,
                                    "global_step": self.global_step})
+                self.epoch_save(epoch_i)
 
             ### Training
             if self.config.TRAIN['warmup'] is not None and epoch_i >= self.config.TRAIN['warmup']:

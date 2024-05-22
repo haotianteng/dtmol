@@ -722,7 +722,7 @@ class TranslationSampler(BaseSampler):
         score = score if self.return_negative_score else -score
         x_c = x.mean(axis = 1)
         x_c_diff = self._ve_kernel(np.zeros_like(x_c),score,sigma_t,sigma_t_1,with_noise = stochastic)
-        x_t = x + x_c_diff
+        x_t = x + x_c_diff[:,None,:]
         return torch.tensor(x_t)    
 
 class ChainSampler(BaseSampler):
@@ -789,7 +789,7 @@ if __name__ == "__main__":
     T = 500
     linear_sch = LinearScheduler(T)
     ll_sch_std = LogLinearScheduler(T,sigma_min = 1e-5, sigma_max = 1) #Parameter value from diffdock rot_sigma_min/max
-    ll_sch_tr = LogLinearScheduler(T,sigma_min = 0.1, sigma_max = 30) #Parameter value from diffdock tr_sigma_min/max
+    ll_sch_tr = LogLinearScheduler(T,sigma_min = 0.1, sigma_max = 5) #Parameter value ~ box radius
     ll_sch_rot = LogLinearScheduler(T,sigma_min = 0.1, sigma_max = 1.65)
     ll_sch_pert = LogLinearScheduler(T,sigma_min = 0.1, sigma_max = 1)
     cos_sch = CosineScheduler(T)
