@@ -185,3 +185,11 @@ if __name__ == "__main__":
     fig = plt.figure()
     plt.plot(es, scores_eps)
     
+    #plot the score norm 
+    score_norms = []
+    es = []
+    for eps in np.arange(0,1,0.01):
+        score_norms.append(score_norm(eps))
+        es.append(eps)
+    fig = plt.figure()
+    plt.plot(es, score_norms)

@@ -662,13 +662,15 @@ class TranslationSampler(BaseSampler):
         if is_int(t):
             t = [t] * B
         e = s_normal(len(x),D)
-        variance = self.noise[t]**2
-        variance = variance[...,None]
+        std = self.noise[t]
+        std = std[...,None]
         with torch.no_grad():
-            x_t = x + np.sqrt(variance) * e
+            x_t = x + std * e
             score = self.score(e,x_t)
             score = -score if self.return_negative_score else score
-        return torch.tensor(x_t), score, np.sqrt(variance)
+        #norm would be used in loss by 1/norm, but instead we want score*norm, so we return reverse of the norm (1/std), result in l = (score-pred)**2*std**2
+        #so the loss will be bigger when the std is large, so we ask the model to focuse more on the high noise region.
+        return torch.tensor(x_t), score, 1/std
 
     def sample(self, x:torch.tensor):
         x = try_to_tensor(x)
@@ -789,9 +791,9 @@ if __name__ == "__main__":
     T = 500
     linear_sch = LinearScheduler(T)
     ll_sch_std = LogLinearScheduler(T,sigma_min = 1e-5, sigma_max = 1) #Parameter value from diffdock rot_sigma_min/max
-    ll_sch_tr = LogLinearScheduler(T,sigma_min = 0.1, sigma_max = 5) #Parameter value ~ box radius
+    ll_sch_tr = LogLinearScheduler(T,sigma_min = 0.1, sigma_max = 3) #Parameter value ~ box radius
     ll_sch_rot = LogLinearScheduler(T,sigma_min = 0.1, sigma_max = 1.65)
-    ll_sch_pert = LogLinearScheduler(T,sigma_min = 0.1, sigma_max = 1)
+    ll_sch_pert = LogLinearScheduler(T,sigma_min = 0.1, sigma_max = 2)
     cos_sch = CosineScheduler(T)
     geo_sch = GeometricScheduler(T)
     poly_sch = PolynomialScheduler(T)
@@ -816,8 +818,8 @@ if __name__ == "__main__":
     rot_sampler = RotationSampler(T = T, schedular=ll_sch_rot)
     g_sampler = GaussianSampler(T = T, schedular = ll_sch_pert)
     g_sampler2 = GaussianSampler(T = T,schedular = ll_sch_pert)
-    # tr_sampler = TranslationSampler(T = T,schedular = ll_sch_tr,sde_format = "VE")
-    tr_sampler = TranslationSampler(T = T,schedular = ll_sch_std,sde_format = "VP")
+    tr_sampler = TranslationSampler(T = T,schedular = ll_sch_tr,sde_format = "VE")
+    # tr_sampler = TranslationSampler(T = T,schedular = ll_sch_std,sde_format = "VP")
     composed = ChainSampler(rot_sampler).compose(g_sampler).compose(tr_sampler)
     composed1 = ChainSampler(g_sampler2)
     #generate a mesh grid
