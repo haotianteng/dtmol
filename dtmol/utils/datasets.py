@@ -146,7 +146,7 @@ class CrossEdgeTypeDataset:
     def __len__(self):
         return len(self.mol_dataset)
 
-    @lru_cache(maxsize=16)
+    @lru_cache(maxsize=1)
     def __getitem__(self, idx):
         source = self.mol_dataset[idx].clone()
         target = self.pocket_dataset[idx].clone()
@@ -172,11 +172,11 @@ class DiffusionDataset(BaseWrapperDataset):
         super().set_epoch(epoch)
         self.epoch = epoch
 
-    @lru_cache(maxsize=16)
     def __cached_item__(self, index: int, epoch: int):
         item = np.array(self.dataset[index])[None,...]
         with data_utils.numpy_seed(self.seed, epoch, index), torch_seed(self.seed, epoch, index):
             diffused,score,norm,time_steps = self.diffuser(item)
+            self.seed = torch_seed(self.seed, epoch, index)
         return {"diffused": diffused[0].to(torch.float32), "score": score[0],"norm":norm[0], "time_steps":time_steps}
     
     def __getitem__(self, index: int):
@@ -191,7 +191,7 @@ class SliceDataset(BaseWrapperDataset):
     def __len__(self):
         return len(self.dataset)
 
-    @lru_cache(maxsize=16)
+    @lru_cache(maxsize=1)
     def __getitem__(self, index):
         item = self.dataset[index]
         if self.start:
@@ -809,7 +809,14 @@ class CrossDataset(DictDataset):
 if __name__ == "__main__":
     from dtmol.utils.dictionary import Dictionary
     from dtmol.dtmol_init import PRETRAIN_FOLDER
+    from dtmol.utils.sampling import rmsd as rmsd_import
     from matplotlib import pyplot as plt
+    def rmsd(mol1, mol2):
+        """
+        mol1: [n,3]
+        mol2: [n,3]
+        """
+        return torch.mean(torch.sqrt(torch.sum((mol1 - mol2)**2,dim = -1)))
     ligand_dict = Dictionary.load(f"{PRETRAIN_FOLDER}/unimol_molecule_dict.txt")
     protein_dict = Dictionary.load(f"{PRETRAIN_FOLDER}/unimol_protein_dict.txt")
     protein_path = "/data/unimol_data/protein_ligand_binding_pose_prediction/"
@@ -823,17 +830,20 @@ if __name__ == "__main__":
     pocket_dataset.transform("train")
 
     #3D plot the pocket and ligand
-    idx = 0
+    idx = 2
     from mpl_toolkits.mplot3d import Axes3D
     fig = plt.figure()
     print(pocket_dataset['train'][idx]['pocket_name'])
     print(pocket_dataset['train'][idx]['smi_name'])
     pocket = pocket_dataset['train'][idx]['net_input.pocket_holo_coord']
     ligand = pocket_dataset['train'][idx]['net_input.mol_holo_coord']
+    ligand_src = pocket_dataset['train'][idx]['net_input.mol_src_coord']
     ax = fig.add_subplot(111, projection='3d')
-    ax.scatter(pocket[:, 0], pocket[:, 1], pocket[:, 2], c='pink', marker='o', label = "pocket")
+    # ax.scatter(pocket[:, 0], pocket[:, 1], pocket[:, 2], c='pink', marker='o', label = "pocket")
     ax.scatter(ligand[:, 0], ligand[:, 1], ligand[:, 2], c='b', marker='o', label = "ligand")
-    
+    ax.scatter(ligand_src[:, 0], ligand_src[:, 1], ligand_src[:, 2], c='purple', marker='o', label = "ligand rdkit")
+    print("RMSD of ligand and ligand rdkit: ", rmsd(ligand_src[1:-1], ligand[1:-1]))
+    print("RMSD2 of ligand and ligand rdkit: ", rmsd_import(ligand_src.unsqueeze(0), ligand.unsqueeze(0), torch.zeros(1,ligand.shape[0]-1).bool(), torch.zeros(1,1,dtype = torch.bool).unsqueeze(0)[:,:,0]))
 
     #Test diffuser
     from dtmol.diffusion import RotationSampler, GaussianSampler, TranslationSampler, ChainSampler
@@ -842,9 +852,9 @@ if __name__ == "__main__":
     cos_sch = CosineScheduler(T)
     geo_sch = GeometricScheduler(T)
     poly_sch = PolynomialScheduler(T)
-    rot_sampler = RotationSampler(schedular=geo_sch)
-    g_sampler = GaussianSampler(schedular = poly_sch)
-    g_sampler2 = GaussianSampler(schedular = geo_sch)
+    rot_sampler = RotationSampler(schedular=cos_sch)
+    g_sampler = GaussianSampler(schedular = cos_sch)
+    g_sampler2 = GaussianSampler(schedular = cos_sch)
     tr_sampler = TranslationSampler(schedular = cos_sch)
     molecule_sampler = ChainSampler(rot_sampler).compose(tr_sampler).compose(g_sampler)
     protein_sampler = ChainSampler(g_sampler2)
@@ -858,8 +868,9 @@ if __name__ == "__main__":
     diffused_pocket = diffuse_dataset['train'][idx]['diffused.pocket_holo_coord']
     diffused_ligand = diffuse_dataset['train'][idx]['diffused.mol_holo_coord']
     assert diffuse_dataset['train'][idx]['diffused.pocket_diffuse_time'] == diffuse_dataset['train'][idx]['diffused.mol_diffuse_time']
-    ax.scatter(diffused_pocket[:, 0], diffused_pocket[:, 1], diffused_pocket[:, 2], c='r', marker='o', label = "diffused pocket")
+    # ax.scatter(diffused_pocket[:, 0], diffused_pocket[:, 1], diffused_pocket[:, 2], c='r', marker='o', label = "diffused pocket")
     ax.scatter(diffused_ligand[:, 0], diffused_ligand[:, 1], diffused_ligand[:, 2], c='g', marker='o', label = "diffused ligand")
+    print("RMSD of ligand and diffused ligand: ", rmsd(diffused_ligand[1:-1], ligand[1:-1]))
     plt.legend()
 
     print(f"Diffuse ligand score shape: {diffuse_dataset['train'][idx]['diffused.mol_diffuse_perturb_score'].shape}")

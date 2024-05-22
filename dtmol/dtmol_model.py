@@ -1,4 +1,5 @@
 import torch
+import copy
 from torch import nn
 from dtmol.decoder import Decoder
 from dtmol.encoder import UniMolEncoder
@@ -75,6 +76,8 @@ class ScoreNetwork(nn.ModuleDict):
                 "src_edge_type": batch['net_input']['mol_edge_type']}
 
     def eval_once(self,batch,rev_sampler,T = 20, stochastic = False):
+        #copy the batch
+        batch = copy.deepcopy(batch)
         mole_sampler = rev_sampler['molecule']
         prot_sampler = rev_sampler['protein']
         orig_T = mole_sampler.T
@@ -105,7 +108,7 @@ class ScoreNetwork(nn.ModuleDict):
             batch['net_input']['mol_src_distance'] = distance[:,:n_mole,:n_mole]
             batch['net_input']['pocket_distance'] = distance[:,n_mole:,n_mole:]
             batch['net_input']['cross_distance'] = distance[:,:n_mole,n_mole:]
-            ### Dubbing code 
+            ### Debugging code 
             # import time
             # current_time = time.strftime("%Y%m%d_%H%M%S")
             # mole_diff = torch.norm(mol_coord.cpu()-batch['net_input']['mol_src_coord'].cpu())

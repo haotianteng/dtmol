@@ -268,7 +268,7 @@ class BaseSampler(object):
             return self.sample(x)
     
     @staticmethod
-    def _vp_kernel(x_t, score, beta_t, alpha_t, with_noise = True, form = "ddpm"):
+    def _vp_kernel(x_t, score, beta_t, alpha_t, with_noise = True, form = "pc"):
         if form == 'direct':
             x_rev = (np.maximum(np.sqrt(1-beta_t),3))(beta_t*score + x_t)
             #direct form if we reverse the discrete diffusion, note this form would diverge at beta_t = 1
@@ -842,7 +842,7 @@ if __name__ == "__main__":
     tr_sampler.set_T(reverse_T)
     composed.set_T(reverse_T)
     dist_compose, dist_rot, dist_g, dist_tr = [],[],[],[]
-    reverse_with_stochastic = True
+    reverse_with_stochastic = False
     def get_reverse_ts(t,T = 20, old_T = 5000):
         t = t * T // old_T
         return np.arange(t,-1,-1)

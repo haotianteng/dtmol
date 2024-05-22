@@ -60,12 +60,12 @@ class DiffusionTrainer(Trainer):
                     self.logger.info(msg)
                 mole_rmsds,prot_rmsds = [],[]
                 for eval_i,eval_batch in enumerate(self.eval_ds):
-                    mole_rmsd,prot_rmsd = self.eval_step(eval_batch)
-                    mole_rmsd_mean,prot_rmsd_mean = mole_rmsd.mean().item(),prot_rmsd.mean().item()
-                    mole_rmsd_std,prot_rmsd_std = mole_rmsd.std().item(),prot_rmsd.std().item()
+                    mole_rmsd,mole_rmsd_baseline,prot_rmsd = self.eval_step(eval_batch)
+                    mole_rmsd_mean, prot_rmsd_mean, mole_rmsd_baseline_mean = mole_rmsd.mean().item(),prot_rmsd.mean().item(),mole_rmsd_baseline.mean().item()
+                    mole_rmsd_std, prot_rmsd_std, mole_rmsd_baseline_std = mole_rmsd.std().item(),prot_rmsd.std().item(), mole_rmsd_baseline.std().item()
                     mole_rmsds += mole_rmsd.tolist()
                     prot_rmsds += prot_rmsd.tolist()
-                    msg = f"Eval {eval_i}/{len(self.eval_ds)}: Mole RMSD {mole_rmsd_mean:.2f} +- {mole_rmsd_std:.2f}, Prot RMSD {prot_rmsd_mean:.2f} +- {prot_rmsd_std:.2f}"
+                    msg = f"Eval {eval_i}/{len(self.eval_ds)}: Mole RMSD {mole_rmsd_mean:.2f} +- {mole_rmsd_std:.2f}, Original Mole RMSD {mole_rmsd_baseline_mean:.2f} +- {mole_rmsd_baseline_std:.2f}, Prot RMSD {prot_rmsd_mean:.2f} +- {prot_rmsd_std:.2f}"
                     self.logger.info(msg)
                 mole_rmsd = np.mean(mole_rmsds)
                 prot_rmsd = np.mean(prot_rmsds)
@@ -181,7 +181,10 @@ class DiffusionTrainer(Trainer):
                                                                       stochastic=self.config.TRAIN['stochastic_reverse_sampling'])
             label = self.get_label_coord(batch)
             mole_rmsd,prot_rmsd = self.rmsd(coord, label, mole_padding, prot_padding)
-        return mole_rmsd, prot_rmsd
+            #calculate the original rmsd
+            orig_coord = torch.cat([batch['net_input']['mol_src_coord'],batch['net_input']['pocket_src_coord']],dim=1)
+            mole_rmsd_ori,prot_rmsd_ori = self.rmsd(orig_coord,label,mole_padding, prot_padding)
+        return mole_rmsd, mole_rmsd_ori, prot_rmsd
     
     def get_label_coord(self, batch):
         label = torch.cat([batch['net_input']['mol_holo_coord'],batch['net_input']['pocket_holo_coord']],dim=1)
