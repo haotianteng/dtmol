@@ -172,6 +172,7 @@ class DiffusionDataset(BaseWrapperDataset):
         super().set_epoch(epoch)
         self.epoch = epoch
 
+    @lru_cache(maxsize=16) #This LRU cache must be set, so that diffusion sampling returns score that is consistent with the diffused coordinates
     def __cached_item__(self, index: int, epoch: int):
         item = np.array(self.dataset[index])[None,...]
         with data_utils.numpy_seed(self.seed, epoch, index), torch_seed(self.seed, epoch, index):
@@ -614,6 +615,21 @@ class CrossDataset(DictDataset):
             coord_perturb_norm_dataset = SliceDataset(coord_norm_dataset, start=2)
             coord_perturb_norm_dataset = FromNumpyDataset(coord_perturb_norm_dataset)
             coord_perturb_norm_dataset = PrependAndAppend(coord_perturb_norm_dataset, 0.0, 0.0)
+            
+            # ### Debug code
+            # diffused_molecular_coord_orig = mol_diffused[0]["diffused"]
+            # diffused_molecular_coord = holo_coord_diffused_nocat[0]
+            # assert np.allclose(diffused_molecular_coord_orig.cpu().numpy(), diffused_molecular_coord.cpu().numpy()), "The diffused coordinates are not the same"
+            # molecular_coord = holo_coord_dataset[0].cpu().numpy()
+            # translation_score = mol_diffused[0]["score"][1,:] #rot -> tr -> pert, so  the second one is the translation score
+            # translation_score_direct = coord_score_dataset[0][1,:]
+            # assert np.allclose(translation_score, translation_score_direct), "The translation score is not the same"
+            # disp = diffused_molecular_coord.mean(axis = 0) - molecular_coord.mean(axis = 0)
+            # correlation = np.corrcoef(translation_score, disp)
+            # print(correlation[0,1])
+            # assert correlation[0,1] > 0.99, f"The correlation between the translation score and the displacement is too low: {correlation} "
+            # ###
+
         if mole_diffusion_sampler is not None or protein_diffusion_sampler is not None:
             if mole_diffusion_sampler is None:
                 holo_coord_diffused_nocat = holo_coord_dataset

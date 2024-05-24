@@ -16,7 +16,7 @@ from dtmol.dtmol_model import ScoreNetwork
 from dtmol.utils.dictionary import Dictionary
 from dtmol.utils.datasets import CrossDataset
 from typing import Dict,Union
-from dtmol_input import load_unimol_binding_data,get_dataloader
+from dtmol_input import load_unimol_binding_data,get_dataloader,check_score_correlation
 from dtmol.dtmol_train_base import Trainer,CONFIG
 from dtmol.encoder import UniMolEncoder
 from dtmol.decoder import Decoder
@@ -155,6 +155,9 @@ class DiffusionTrainer(Trainer):
         return rmsd_mole, rmsd_prot
     
     def train_step(self, batch):
+        if not check_score_correlation(batch):
+            if self._on_main_rank():
+                self.logger.warning("Score and displacement are not correlated, skip this batch")
         output, padding_mask = self.nets(batch)
         losses = self.loss(output, padding_mask, batch, norm_weighted=self.config.TRAIN['norm_weighted'])
         loss = sum([val for key,val in losses.items()])

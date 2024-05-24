@@ -820,7 +820,7 @@ if __name__ == "__main__":
     g_sampler2 = GaussianSampler(T = T,schedular = ll_sch_pert)
     tr_sampler = TranslationSampler(T = T,schedular = ll_sch_tr,sde_format = "VE")
     # tr_sampler = TranslationSampler(T = T,schedular = ll_sch_std,sde_format = "VP")
-    composed = ChainSampler(rot_sampler).compose(g_sampler).compose(tr_sampler)
+    composed = ChainSampler(rot_sampler).compose(tr_sampler).compose(g_sampler)
     composed1 = ChainSampler(g_sampler2)
     #generate a mesh grid
     x = np.linspace(-1,1,5)
@@ -836,6 +836,13 @@ if __name__ == "__main__":
     x_3, tr_score, tr_norm,tr_ts = tr_sampler.sample(x_2)
     composed1.conjugate(composed)
     x_compose, c_score, c_norm,c_ts = composed.sample(x_0)
+
+    actual_disp = x_compose[0].mean(dim = 0) - x_0[0].mean(dim = 0)
+    score_disp = c_score[:,1]
+    print("Actual displacement:",actual_disp)
+    print("Predicted displacement:",score_disp)
+    correlation = np.corrcoef(actual_disp,score_disp)
+    print("Correlation:",correlation)
 
     # Reverse the diffusion
     reverse_T = 20

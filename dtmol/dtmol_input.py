@@ -55,6 +55,22 @@ def load_unimol_binding_data(config,
         binding_dataset.load_lmdb(data_f,s)
     return binding_dataset
 
+def check_score_correlation(batch):
+    for idx in range(len(batch['net_input']['mol_holo_coord'])):
+        mole_mean = process_coordinate(batch['net_input']['mol_holo_coord'][idx])
+        mole_mean = mole_mean.mean(axis = 0)
+        mole_diffused_mean = process_coordinate(batch['diffused']['mol_holo_coord'][idx])
+        mole_diffused_mean = mole_diffused_mean.mean(axis = 0)
+        tr_score = batch['diffused']['mol_diffuse_trrot_score'][idx,1,:].cpu().numpy()
+        disp = mole_diffused_mean - mole_mean
+        coor = np.corrcoef(tr_score,disp)[0,1]
+        #correlation
+        # print("Displacement:",disp)
+        # print("Score:",tr_score)
+        if coor < 0.9:
+            return False
+    return True        
+
 def get_dataloader(dataset,
                    batch_size = 64,
                    split = ['train','valid','test'],
@@ -112,6 +128,39 @@ class DeviceDataLoader():
 
 if __name__ == "__main__":
     # def test_input():
+    import numpy as np
+    def process_coordinate(coords):
+        return coords[~torch.isinf(coords).any(dim = -1)].cpu().numpy()
+
+    def visualize(batch,idx = 0):
+        collection = {}
+        collection['pocket'] = batch['net_input']['pocket_holo_coord'][idx]
+        collection['molecule'] = batch['net_input']['mol_holo_coord'][idx]
+        collection['diffused_pocket'] = batch['diffused']['pocket_holo_coord'][idx]
+        collection['diffused_molecule'] = batch['diffused']['mol_holo_coord'][idx]
+        collection['rdkit_molecule'] = batch['net_input']['mol_src_coord'][idx]
+        #exclude inf coordinate
+        for key in collection:
+            collection[key] = process_coordinate(collection[key])
+        #create a df
+        import pandas as pd
+        import numpy as np
+        df = pd.DataFrame()
+        for key in collection:
+            df = pd.concat([df,pd.DataFrame(collection[key],columns = ['x','y','z']).assign(species = key)],axis = 0)
+        #add mean coordinate of molecules
+        mean_mole = df[df['species'] == 'molecule'][['x','y','z']].mean().values
+        mean_diffused_mole = df[df['species'] == 'diffused_molecule'][['x','y','z']].mean().values
+        mean_rdkit_mole = df[df['species'] == 'rdkit_molecule'][['x','y','z']].mean().values
+        df = pd.concat([df,pd.DataFrame(np.array([mean_mole,mean_diffused_mole,mean_rdkit_mole]),columns = ['x','y','z']).assign(species = ['mean_mole','mean_diffused_mole','mean_rdkit_mole'])],axis = 0)
+
+        #plot 3d coordinates
+        import plotly.express as px
+        fig = px.scatter_3d(df,x = 'x',y = 'y',z = 'z',color = 'species', size_max = 3)
+        fig.show()
+
+
+    from matplotlib import pyplot as plt
     protein_path = "/data/unimol_data/protein_ligand_binding_pose_prediction/"
     test_config = {
     "seed": 0,
@@ -119,13 +168,13 @@ if __name__ == "__main__":
     "max_pocket_atoms": 256,
     "max_diffusion_time": 5000,
     'tr_sigma_min': 0.1,
-    'tr_sigma_max': 0.9999,
-    'tr_sde': 'VP',
+    'tr_sigma_max': 3.,
+    'tr_sde': 'VE',
     'rot_sigma_min': 0.1,
     'rot_sigma_max': 1.65,
     'rot_sde': 'VE',
     'pert_mole_sigma_min': 0.1,
-    'pert_mole_sigma_max': 1,
+    'pert_mole_sigma_max': 2,
     'pert_mole_sde': 'VE',
     'pert_prot_sigma_min': 0.1,
     'pert_prot_sigma_max': 1,
@@ -140,5 +189,8 @@ if __name__ == "__main__":
         print(batch['diffused']['pocket_diffuse_norm'][0])
         print(batch['diffused']['pocket_diffuse_time'])
         print(batch['diffused']['mol_diffuse_time'])
+        check_score_correlation(batch)
+        visualize(batch)
         break
+    
     
