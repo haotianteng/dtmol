@@ -95,6 +95,12 @@ class DiffusionTrainer(Trainer):
                         param.requires_grad = True
             pbar = tqdm(enumerate(self.train_ds),total = len(self.train_ds),desc = f"Epoch {epoch_i}, loss {loss:.4f}")
             for i_step, batch in pbar:
+                if self.config.DATASET['tr_sde'] == 'VE':
+                    corrs,ts,check = check_score_correlation(batch, 
+                                                             coor_threshod = 0.8, 
+                                                             min_diffusion_time = 0.1 * self.config.DATASET['max_diffusion_time'])
+                    if (not check) and self._on_main_rank():
+                        self.logger.warning(f"Translation score and mean coordinates displacement has low correlation {min(corrs)} at batch {i_step}")
                 loss = self.train_step(batch)
                 pbar.set_description(f"Epoch {epoch_i}, loss {loss:.4f}")
                 if torch.isnan(loss):
@@ -155,9 +161,6 @@ class DiffusionTrainer(Trainer):
         return rmsd_mole, rmsd_prot
     
     def train_step(self, batch):
-        if not check_score_correlation(batch):
-            if self._on_main_rank():
-                self.logger.warning("Score and displacement are not correlated, skip this batch")
         output, padding_mask = self.nets(batch)
         losses = self.loss(output, padding_mask, batch, norm_weighted=self.config.TRAIN['norm_weighted'])
         loss = sum([val for key,val in losses.items()])
@@ -307,6 +310,10 @@ def worker(idx,world_size,args):
                                  batch_size = args['batch_size'],
                                  device = idx,
                                  distributed= distributed)
+    
+    # for batch in loader_dict['train']:
+    #     check_score_correlation(batch)
+    #     raise
 
     ##% Build the trainer
     if args['train']['mode'] == "debug":

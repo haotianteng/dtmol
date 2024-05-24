@@ -44,7 +44,7 @@ args = {
         "max_pocket_atoms": 256,
         'tr_sigma_min': 0.1,
         'tr_sigma_max': 0.9999,
-        'tr_sde': 'VP',
+        'tr_sde': 'VE',
         'rot_sigma_min': 0.1,
         'rot_sigma_max': 1.65,
         'rot_sde': 'VE',

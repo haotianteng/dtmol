@@ -59,7 +59,8 @@ def load_unimol_binding_data(config,
 def process_coordinate(coords):
     return coords[~torch.isinf(coords).any(dim = -1)].cpu().numpy()
 
-def check_score_correlation(batch):
+def check_score_correlation(batch,coor_threshod = 0.8, min_diffusion_time = 100):
+    corrs,ts = [],[]
     for idx in range(len(batch['net_input']['mol_holo_coord'])):
         mole_mean = process_coordinate(batch['net_input']['mol_holo_coord'][idx])
         mole_mean = mole_mean.mean(axis = 0)
@@ -67,13 +68,19 @@ def check_score_correlation(batch):
         mole_diffused_mean = mole_diffused_mean.mean(axis = 0)
         tr_score = batch['diffused']['mol_diffuse_trrot_score'][idx,1,:].cpu().numpy()
         disp = mole_diffused_mean - mole_mean
-        coor = np.corrcoef(tr_score,disp)[0,1]
+        corr = np.corrcoef(tr_score,disp)[0,1]
         #correlation
         # print("Displacement:",disp)
         # print("Score:",tr_score)
-        if coor < 0.9:
-            return False
-    return True        
+        corrs.append(corr)
+        diffusion_time = batch['diffused']['mol_diffuse_time'][idx].item()
+        ts.append(diffusion_time)
+    check = True
+    for c,t in zip(corrs,ts):
+        if c < coor_threshod and t > min_diffusion_time:
+            check = False
+            break
+    return corrs,ts,check
 
 def get_dataloader(dataset,
                    batch_size = 64,
@@ -165,18 +172,38 @@ if __name__ == "__main__":
     from matplotlib import pyplot as plt
     protein_path = "/data/unimol_data/protein_ligand_binding_pose_prediction/"
     test_config = {
+    # "seed": 0,
+    # "max_seq_len": 1000,
+    # "max_pocket_atoms": 256,
+    # "max_diffusion_time": 5000,
+    # 'tr_sigma_min': 0.1,
+    # 'tr_sigma_max': 3.,
+    # 'tr_sde': 'VE',
+    # 'rot_sigma_min': 0.1,
+    # 'rot_sigma_max': 1.65,
+    # 'rot_sde': 'VE',
+    # 'pert_mole_sigma_min': 0.1,
+    # 'pert_mole_sigma_max': 2,
+    # 'pert_mole_sde': 'VE',
+    # 'pert_prot_sigma_min': 0.1,
+    # 'pert_prot_sigma_max': 1,
+    # 'pert_prot_sde': 'VE',
+    # 'prot_pert': True,
+    # 'mole_pert': True,
+    # 'trrot': True,
+    # }
     "seed": 0,
-    "max_seq_len": 1000,
+    "max_diffusion_time":5000,
+    "max_seq_len": 768,
     "max_pocket_atoms": 256,
-    "max_diffusion_time": 5000,
     'tr_sigma_min': 0.1,
-    'tr_sigma_max': 3.,
+    'tr_sigma_max': 1.,
     'tr_sde': 'VE',
     'rot_sigma_min': 0.1,
     'rot_sigma_max': 1.65,
     'rot_sde': 'VE',
     'pert_mole_sigma_min': 0.1,
-    'pert_mole_sigma_max': 2,
+    'pert_mole_sigma_max': 1,
     'pert_mole_sde': 'VE',
     'pert_prot_sigma_min': 0.1,
     'pert_prot_sigma_max': 1,
@@ -186,11 +213,11 @@ if __name__ == "__main__":
     'trrot': True,
     }
     loader_dict = load_unimol_binding_data(test_config,protein_path)
-    loader_dict = get_dataloader(loader_dict,batch_size = 4)
+    loader_dict = get_dataloader(loader_dict,batch_size = 4,device = 0)
     for batch in loader_dict["train"]:
-        print(batch['diffused']['pocket_diffuse_norm'][0])
-        print(batch['diffused']['pocket_diffuse_time'])
-        print(batch['diffused']['mol_diffuse_time'])
+        # print(batch['diffused']['pocket_diffuse_norm'][0])
+        # print(batch['diffused']['pocket_diffuse_time'])
+        # print(batch['diffused']['mol_diffuse_time'])
         check_score_correlation(batch)
         visualize(batch)
         break
