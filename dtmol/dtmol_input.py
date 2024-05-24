@@ -55,6 +55,9 @@ def load_unimol_binding_data(config,
         binding_dataset.load_lmdb(data_f,s)
     return binding_dataset
 
+def process_coordinate(coords):
+    return coords[~torch.isinf(coords).any(dim = -1)].cpu().numpy()
+
 def check_score_correlation(batch):
     for idx in range(len(batch['net_input']['mol_holo_coord'])):
         mole_mean = process_coordinate(batch['net_input']['mol_holo_coord'][idx])
@@ -129,8 +132,6 @@ class DeviceDataLoader():
 if __name__ == "__main__":
     # def test_input():
     import numpy as np
-    def process_coordinate(coords):
-        return coords[~torch.isinf(coords).any(dim = -1)].cpu().numpy()
 
     def visualize(batch,idx = 0):
         collection = {}
