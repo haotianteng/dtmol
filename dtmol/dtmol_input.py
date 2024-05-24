@@ -1,6 +1,7 @@
 import torch
 from torch.utils import data
 import dtmol
+import numpy as np
 from dtmol.utils.dictionary import Dictionary
 from dtmol.utils.datasets import CrossDataset
 from dtmol.utils.dictionary import Dictionary
