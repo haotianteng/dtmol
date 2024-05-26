@@ -668,8 +668,10 @@ class TranslationSampler(BaseSampler):
             x_t = x + std * e
             score = self.score(e,x_t)
             score = -score if self.return_negative_score else score
-        #norm would be used in loss by 1/norm, but instead we want score*norm, so we return reverse of the norm (1/std), result in l = (score-pred)**2*std**2
-        #so the loss will be bigger when the std is large, so we ask the model to focuse more on the high noise region.
+        #norm would be used in loss by 1/norm, but instead we want score*norm, 
+        #so we return reverse of the norm (1/std), result in l = (score-pred)**2*std**2
+        #which make the loss bigger when the std is large, in order to make model to 
+        #focuse more on the high noise region.
         return torch.tensor(x_t), score, 1/std
 
     def sample(self, x:torch.tensor):

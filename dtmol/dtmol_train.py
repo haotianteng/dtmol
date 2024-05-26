@@ -95,9 +95,9 @@ class DiffusionTrainer(Trainer):
                         param.requires_grad = True
             pbar = tqdm(enumerate(self.train_ds),total = len(self.train_ds),desc = f"Epoch {epoch_i}, loss {loss:.4f}")
             for i_step, batch in pbar:
-                if self.config.DATASET['tr_sde'] == 'VE':
+                if self.config.DATASET['tr_sde'] == 'VE' and self.config.TRAIN['mode'] == "debug":
                     corrs,ts,check = check_score_correlation(batch, 
-                                                             coor_threshod = 0.8, 
+                                                             corr_threshold = 0.8, 
                                                              min_diffusion_time = 0.1 * self.config.DATASET['max_diffusion_time'])
                     if (not check) and self._on_main_rank():
                         self.logger.warning(f"Translation score and mean coordinates displacement has low correlation {min(corrs)} at batch {i_step}")
@@ -206,8 +206,7 @@ def worker(idx,world_size,args):
     train_config=  args['train']
     dataset_config = args['dataset']
     if args['train']['mode'] == "debug":
-        args['dataset']['max_diffusion_time'] = 10
-        args['train']['eval_every_n_epoches'] = 1e6 #Never evaluate the model in debug mode
+        args['train']['eval_every_n_epoches'] = 10 
     if distributed:
         dist.init_process_group(backend="nccl", rank=idx, world_size=world_size)
     package_path = dtmol.__path__[0]
@@ -233,57 +232,78 @@ def worker(idx,world_size,args):
     dropout = args['model']['dropout']
     independent_se3_attention = args['model']['independent_se3_attention']
     update_distance_matrix = args['model']['update_distance_matrix']
+    MODEL_NO_PRETRAIN = {'pretrain_folder': pretrain_f,
+                'load_pretrain': False,
+                'encoder': {'dropout':dropout,
+                            'encoder_layers':1,
+                            'emb_dropout':dropout,
+                            'attention_dropout':dropout,
+                            'activation_dropout':dropout,
+                            'pooler_dropout':dropout,
+                },
+                'decoder': {'layers':8,
+                            'embed_dim':512,
+                            'ffn_embed_dim':1024,
+                            'attention_heads':64,
+                            'independent_se3_attention':independent_se3_attention,
+                            'update_distance_matrix': update_distance_matrix}
+                            }
     MODEL_S = {'pretrain_folder': pretrain_f,
-                  'load_pretrain': True,
-                  'encoder': {'dropout':dropout,
-                              'emb_dropout':dropout,
-                              'attention_dropout':dropout,
-                              'activation_dropout':dropout,
-                              'pooler_dropout':dropout,
-                  },
-                  'decoder': {'layers':8,
-                              'embed_dim':512,
-                              'ffn_embed_dim':1024,
-                              'attention_heads':64,
-                              'independent_se3_attention':independent_se3_attention,
-                              'update_distance_matrix': update_distance_matrix}
-                              }
+                'load_pretrain': True,
+                'encoder': {'dropout':dropout,
+                            'emb_dropout':dropout,
+                            'attention_dropout':dropout,
+                            'activation_dropout':dropout,
+                            'pooler_dropout':dropout,
+                },
+                'decoder': {'layers':8,
+                            'embed_dim':512,
+                            'ffn_embed_dim':1024,
+                            'attention_heads':64,
+                            'independent_se3_attention':independent_se3_attention,
+                            'update_distance_matrix': update_distance_matrix}
+                            }
 
     MODEL_L = {'pretrain_folder': pretrain_f,
-                    'load_pretrain': True,
-                    'encoder': {'dropout':dropout,
-                                'emb_dropout':dropout,
-                                'attention_dropout':dropout,
-                                'activation_dropout':dropout,
-                                'pooler_dropout':dropout,
-                    },
-                    'decoder': {'layers':16,
-                                'embed_dim':512,
-                                'ffn_embed_dim':2048,
-                                'attention_heads':64,
-                                'independent_se3_attention':independent_se3_attention,
-                                'update_distance_matrix': update_distance_matrix}
-                                }
+                'load_pretrain': True,
+                'encoder': {'dropout':dropout,
+                            'emb_dropout':dropout,
+                            'attention_dropout':dropout,
+                            'activation_dropout':dropout,
+                            'pooler_dropout':dropout,
+                },
+                'decoder': {'layers':16,
+                            'embed_dim':512,
+                            'ffn_embed_dim':2048,
+                            'attention_heads':64,
+                            'independent_se3_attention':independent_se3_attention,
+                            'update_distance_matrix': update_distance_matrix}
+                            }
 
     MODEL_XL = {'pretrain_folder': pretrain_f,
-                    'load_pretrain': True,
-                    'encoder': {'dropout':dropout,
-                                'emb_dropout':dropout,
-                                'attention_dropout':dropout,
-                                'activation_dropout':dropout,
-                                'pooler_dropout':dropout,
-                    },
-                    'decoder': {'layers':24,
-                                'embed_dim':512,
-                                'ffn_embed_dim':3072,
-                                'attention_heads':64,
-                                'independent_se3_attention':independent_se3_attention,
-                                'update_distance_matrix': update_distance_matrix}
-                                }
+                'load_pretrain': True,
+                'encoder': {'dropout':dropout,
+                            'emb_dropout':dropout,
+                            'attention_dropout':dropout,
+                            'activation_dropout':dropout,
+                            'pooler_dropout':dropout,
+                },
+                'decoder': {'layers':24,
+                            'embed_dim':512,
+                            'ffn_embed_dim':3072,
+                            'attention_heads':64,
+                            'independent_se3_attention':independent_se3_attention,
+                            'update_distance_matrix': update_distance_matrix}
+                            }
     if model_name.endswith("large"):
         config.MODEL = MODEL_L
     elif model_name.endswith("xl"):
         config.MODEL = MODEL_XL
+    elif "no_pretrain" in model_name:
+        print("Training model from scratch, pretrain model is disabled.")
+        config.MODEL = MODEL_NO_PRETRAIN
+        args['train']['fine_tune_pretrain'] = True
+        args['train']['warmup'] = None
     else:
         config.MODEL= MODEL_S
     config.MODEL['max_diffusion_time'] = dataset_config['max_diffusion_time']
@@ -302,10 +322,7 @@ def worker(idx,world_size,args):
     if distributed:
         net = DDP(net,device_ids=[idx],find_unused_parameters=True)
     config.DATASET = dataset_config
-    binding_dataset = load_unimol_binding_data(config.DATASET,ds_path,
-                                               perturbation_mole = config.DATASET['mole_pert'],
-                                               perturbation_prot = config.DATASET['prot_pert'],
-                                               trrot = config.DATASET['trrot'])
+    binding_dataset = load_unimol_binding_data(config.DATASET,ds_path)
     loader_dict = get_dataloader(binding_dataset,
                                  batch_size = args['batch_size'],
                                  device = idx,

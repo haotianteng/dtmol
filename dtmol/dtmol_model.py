@@ -75,9 +75,16 @@ class ScoreNetwork(nn.ModuleDict):
                 "src_coord": batch['net_input']['mol_src_coord'],
                 "src_edge_type": batch['net_input']['mol_edge_type']}
 
+    def get_diffusion_time(self,orig_T, current_T, t, scheduler = None):
+        if scheduler is None:
+            return int(t/current_T*orig_T)
+        else:
+            return scheduler.get_time(t, current_T, orig_T)
+
     def eval_once(self,batch,rev_sampler,T = 20, stochastic = False):
         #copy the batch
         batch = copy.deepcopy(batch)
+        n_batch = batch['net_input']['mol_src_coord'].size(0)
         mole_sampler = rev_sampler['molecule']
         prot_sampler = rev_sampler['protein']
         orig_T = mole_sampler.T
@@ -93,6 +100,9 @@ class ScoreNetwork(nn.ModuleDict):
         ######
 
         for i in range(T-1,-1,-1):
+            t = self.get_diffusion_time(orig_T, T, i)
+            batch['net_input']['mol_diffuse_time'] = torch.tensor([t]*n_batch,device=mol_coord.device).unsqueeze(1)
+            batch['net_input']['pocket_diffuse_time'] = torch.tensor([t]*n_batch,device=pocket_coord.device).unsqueeze(1)
             score_dict, mole_padding, prot_padding = self.forward(batch, training=False)
             score = torch.cat([score_dict['tr-rotation'].view(-1,2,3),score_dict['perturbation']],dim=1)
             coord,distance = reverse_sampling(coord, 
@@ -128,8 +138,12 @@ class ScoreNetwork(nn.ModuleDict):
             pocket_input = self._get_pocket_eval(batch)
         (mole_embd, mole_attn, mole_padding) = self['ligand_encoder'](**mole_input, features_only=True)
         (pocket_embd, pocket_attn, pocket_padding) = self['protein_encoder'](**pocket_input, features_only=True)
-        mole_time = batch['diffused']['mol_diffuse_time']
-        pocket_time = batch['diffused']['pocket_diffuse_time']
+        if training:
+            mole_time = batch['diffused']['mol_diffuse_time']
+            pocket_time = batch['diffused']['pocket_diffuse_time']
+        else:
+            mole_time = batch['net_input']['mol_diffuse_time']
+            pocket_time = batch['net_input']['pocket_diffuse_time']
         assert torch.equal(mole_time, pocket_time), "Molecule and pocket diffusion time should be the same."
         if training:
             cross_dist, cross_edges = batch['diffused']['cross_distance'], batch['diffused']['cross_edge_type']

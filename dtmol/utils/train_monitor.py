@@ -7,7 +7,7 @@ def plot_grad_flow(named_parameters, use_wandb = True):
     for n, p in named_parameters:
         if(p.requires_grad) and ("bias" not in n) and (p.grad is not None):
             layers.append(n)
-            ave_grads.append(p.grad.abs().mean())
+            ave_grads.append(p.grad.abs().mean().cpu())
     plt.plot(ave_grads, alpha=0.3, color="b")
     plt.hlines(0, 0, len(ave_grads)+1, linewidth=1, color="k" )
     plt.xticks(range(0,len(ave_grads), 1), layers, rotation="vertical")

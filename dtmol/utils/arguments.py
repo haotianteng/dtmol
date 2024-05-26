@@ -93,7 +93,7 @@ def parse_args():
                         help = "If use stochastic sampling when doing evaluation")
 
     ### Model settings
-    parser.add_argument("--dropout",type=float,default=0.0)
+    parser.add_argument("--dropout",type=float,default=0.1)
     parser.add_argument("--trrot_weight",type=float,default=1.0)
     parser.add_argument("--pert_weight",type=float,default=1.0)
     parser.add_argument("--share_attention",action='store_false',dest='independent_se3_attention',

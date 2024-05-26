@@ -12,10 +12,7 @@ from dtmol.diffusion import GeometricScheduler, PolynomialScheduler, CosineSched
 
 def load_unimol_binding_data(config,
                              data_f,
-                             split = ['train','valid','test'],
-                             perturbation_mole = True,
-                             perturbation_prot = True,
-                             trrot = True):
+                             split = ['train','valid','test']):
     PRETRAIN_FOLDER = f"{dtmol.__path__[0]}/pretrain_models"
     ligand_dict = Dictionary.load(f"{PRETRAIN_FOLDER}/unimol_molecule_dict.txt")
     protein_dict = Dictionary.load(f"{PRETRAIN_FOLDER}/unimol_protein_dict.txt")
@@ -37,12 +34,12 @@ def load_unimol_binding_data(config,
     tr_sampler = TranslationSampler(schedular = ll_sch_tr,sde_format = config['tr_sde'])
     dummy_sampler = DummySampler(schedular = cos_sch,sde_format = config['tr_sde'],system_wise = False)
     dummy_system_sampler = DummySampler(schedular = cos_sch,sde_format = config['tr_sde'],system_wise = True)
-    if not trrot:
+    if not config['trrot']:
         rot_sampler = dummy_system_sampler
         tr_sampler = dummy_system_sampler
-    if not perturbation_mole:
+    if not config['mole_pert']:
         g_sampler = dummy_sampler
-    if not perturbation_prot:
+    if not config['prot_pert']:
         g_sampler2 = dummy_sampler
     molecule_sampler = ChainSampler(rot_sampler).compose(tr_sampler).compose(g_sampler)
     protein_sampler = ChainSampler(g_sampler2)
@@ -59,7 +56,7 @@ def load_unimol_binding_data(config,
 def process_coordinate(coords):
     return coords[~torch.isinf(coords).any(dim = -1)].cpu().numpy()
 
-def check_score_correlation(batch,coor_threshod = 0.8, min_diffusion_time = 100):
+def check_score_correlation(batch,corr_threshold = 0.8, min_diffusion_time = 100):
     corrs,ts = [],[]
     for idx in range(len(batch['net_input']['mol_holo_coord'])):
         mole_mean = process_coordinate(batch['net_input']['mol_holo_coord'][idx])
@@ -77,7 +74,7 @@ def check_score_correlation(batch,coor_threshod = 0.8, min_diffusion_time = 100)
         ts.append(diffusion_time)
     check = True
     for c,t in zip(corrs,ts):
-        if c < coor_threshod and t > min_diffusion_time:
+        if c < corr_threshold and t > min_diffusion_time:
             check = False
             break
     return corrs,ts,check
@@ -170,6 +167,7 @@ if __name__ == "__main__":
 
 
     from matplotlib import pyplot as plt
+    from tqdm import tqdm
     protein_path = "/data/unimol_data/protein_ligand_binding_pose_prediction/"
     test_config = {
     # "seed": 0,
@@ -209,17 +207,27 @@ if __name__ == "__main__":
     'pert_prot_sigma_max': 1,
     'pert_prot_sde': 'VE',
     'prot_pert': True,
-    'mole_pert': True,
+    'mole_pert': False,
     'trrot': True,
     }
     loader_dict = load_unimol_binding_data(test_config,protein_path)
     loader_dict = get_dataloader(loader_dict,batch_size = 4,device = 0)
-    for batch in loader_dict["train"]:
-        # print(batch['diffused']['pocket_diffuse_norm'][0])
-        # print(batch['diffused']['pocket_diffuse_time'])
-        # print(batch['diffused']['mol_diffuse_time'])
-        check_score_correlation(batch)
-        visualize(batch)
-        break
+    check_count = 0
+    MAX_CHECK_COUNT = 100000
+    for epoch in range(2):
+        for batch in tqdm(loader_dict["train"]):
+            # print(batch['diffused']['pocket_diffuse_norm'][0])
+            # print(batch['diffused']['pocket_diffuse_time'])
+            # print(batch['diffused']['mol_diffuse_time'])
+            corrs,ts,check = check_score_correlation(batch,corr_threshold = 0.99, min_diffusion_time = 0)
+            # visualize(batch)
+            check_count += 1
+            if not check:
+                print("Check failed")
+                print(corrs)
+                print(ts)
+            if check_count > MAX_CHECK_COUNT:
+                break
+    print("All check passed.")
     
     

@@ -172,7 +172,7 @@ class DiffusionDataset(BaseWrapperDataset):
         super().set_epoch(epoch)
         self.epoch = epoch
 
-    @lru_cache(maxsize=16) #This LRU cache must be set, so that diffusion sampling returns score that is consistent with the diffused coordinates
+    @lru_cache(maxsize=128) #This LRU cache must be set, so that diffusion sampling returns score that is consistent with the diffused coordinates
     def __cached_item__(self, index: int, epoch: int):
         item = np.array(self.dataset[index])[None,...]
         with data_utils.numpy_seed(self.seed, epoch, index), torch_seed(self.seed, epoch, index):
