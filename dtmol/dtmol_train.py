@@ -108,7 +108,7 @@ class DiffusionTrainer(Trainer):
                     continue
                 optimizer.zero_grad()
                 loss.backward()
-                if self.config.TRAIN['grad_norm'] > 0:
+                if self.config.TRAIN['grad_norm']:
                     nn.utils.clip_grad_norm_(self.nets.parameters(), self.config.TRAIN['grad_norm'])
                 if self.config.TRAIN['mode'] == "debug":
                     plot_grad_flow(self.nets.named_parameters(),use_wandb = self.use_wandb)

@@ -23,7 +23,7 @@ class CONFIG(object):
                  experiment = "1-docking",
                  keep_record = 5,
                  device = "cuda",
-                 grad_norm = 1,
+                 grad_norm = None,
                  use_wandb = True):
         self.TRAIN = {"project":project,
                       "group":group,

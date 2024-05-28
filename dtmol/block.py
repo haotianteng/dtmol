@@ -305,12 +305,13 @@ class DiTLayer(nn.Module):
         if return_attn:
             x, attn_weights, attn_probs = x
             if self.indp_attn:
-                _,attn_weights_disp,_ = self.disp_attn(query=x,
+                _,attn_weights_disp,attn_prob_disp = self.disp_attn(query=x,
                                                        key_padding_mask=padding_mask,
                                                        attn_bias=attn_bias,
                                                        return_attn=True)
             else:
                 attn_weights_disp = attn_weights
+                attn_prob_disp = attn_probs
         x = x + gate_msa.unsqueeze(1) * x
         x = x + gate_mlp.unsqueeze(1) * self.mlp(modulate(self.norm2(x), shift_mlp, scale_mlp))
     
@@ -318,7 +319,7 @@ class DiTLayer(nn.Module):
             return x
         else:
             
-            return x, attn_weights, attn_probs, attn_weights_disp
+            return x, attn_weights, attn_probs, attn_weights_disp, attn_prob_disp
 
 
 class DiTFinalLayer(nn.Module):
@@ -339,6 +340,76 @@ class DiTFinalLayer(nn.Module):
         x = modulate(self.norm_final(x), shift, scale)
         x = self.linear(x)
         return x
+
+class SE3ELayer(nn.Module):
+    """
+    The SE(3)-equivariant layer.
+    """
+    def __init__(self,heads:int,
+                 update_distance_matrix:bool):
+        super().__init__()
+        self.attention_heads = heads
+        self.norm_attn = nn.LayerNorm(heads, elementwise_affine=False, eps=1e-6)
+        self.norm_disp = nn.LayerNorm(heads, elementwise_affine=False, eps=1e-6)
+        self.disp_proj = nn.Linear(heads, heads)
+        self.attn_proj = nn.Linear(heads, heads)
+        self.sigmoid = nn.Sigmoid()
+        self.update_distance_matrix = update_distance_matrix
+        if update_distance_matrix:
+            self.dist_update_proj = nn.Linear(heads, heads, bias=False)
+
+    def forward(self, attn_disp, attn_mask, coordinates):
+        """
+        Args:
+            attn_disp: torch.Tensor, the attention displacement tensor with shape [B, H, N, N].
+            attn_mask: torch.Tensor, the attention mask tensor with shape [B*H, N, N].
+            coordinates: torch.Tensor, the coordinates tensor with shape [B, H, N, D].
+
+        """
+        bsz,_, seq_len,d = coordinates.size()
+        if self.update_distance_matrix:
+            old_distance_matrix = get_distance_matrix(coordinates.view(bsz*self.attention_heads, seq_len, d))
+        normalizer = torch.sqrt(torch.sum(~torch.isinf(attn_disp),axis = -1))
+        # fill -inf with 0
+        attn_disp = attn_disp.permute(0,2,3,1).contiguous() # [B, N, N, H]
+        inf_mask = torch.isinf(attn_disp)
+        attn_disp = attn_disp.masked_fill(inf_mask, 0)
+        attn_disp = self.attn_proj(attn_disp) # [B, N, N, H]
+        attn_disp = self.norm_attn(attn_disp)
+        attn_disp = self.sigmoid(attn_disp)
+        attn_disp = attn_disp.masked_fill(inf_mask, 0)
+        attn_disp = attn_disp.permute(0,3,1,2).contiguous() # [B, H, N, N]
+        # attn_disp = nn.SiLU
+        #project attn_mask with self.atten_proj
+        # attn_disp = self.atten_proj(attn_mask.permute(0,2,3,1)).permute(0,3,1,2) # [bsz, head, seq_len, seq_len]
+        
+        
+        # SE(3)-equivariant branch
+        displacement_tensor = displacement(coordinates.view(bsz*self.attention_heads, seq_len, d)).view(bsz, self.attention_heads, seq_len, seq_len, d) # [bsz, head, seq_len, seq_len, d]
+        displacement_tensor = displacement_tensor.permute(0,2,3,4,1) # [bsz, seq_len, seq_len, d, head]
+        displacement_tensor = self.disp_proj(displacement_tensor)
+        displacement_tensor = self.norm_disp(displacement_tensor)
+        displacement_tensor = displacement_tensor.permute(0,4,1,2,3) # [bsz, head, seq_len, seq_len, d]
+        displacement_tensor = attn_disp.unsqueeze(-1) * displacement_tensor # [bsz, head, seq_len, seq_len, d]
+        # non_zero = (displacement)
+        displacement_tensor = displacement_tensor.sum(dim=-2) # [bsz, head, seq_len, d]
+        displacement_tensor = displacement_tensor / (normalizer.unsqueeze(-1) + 1e-5) # divide by sqrt(d)
+        #normalize by the sqrt of number of non-zero elements
+        
+
+        coordinates = coordinates + displacement_tensor # [bsz, head, seq_len, d]
+
+        if self.update_distance_matrix:
+            # update the attn_mask
+            distance_matrix = get_distance_matrix(coordinates.view(bsz*self.attention_heads, seq_len, d)) # [bsz*head, seq_len, seq_len]
+            delta_distance_matrix = distance_matrix - old_distance_matrix
+            old_distance_matrix = distance_matrix
+            delta_distance_matrix = delta_distance_matrix.view(bsz,-1,seq_len,seq_len).permute(0,2,3,1).contiguous() # [bsz, seq_len, seq_len, head]
+            delta_distance_matrix = self.dist_update_proj(delta_distance_matrix)
+            delta_distance_matrix = delta_distance_matrix.permute(0,3,1,2).contiguous() # [bsz, head, seq_len, seq_len]
+            attn_mask = attn_mask +  delta_distance_matrix.view(-1,seq_len,seq_len)# d exp{(-Ax+b)^2} = -2(Ax+b) exp{(-Ax+b)^2} dx
+        return attn_disp,attn_mask, coordinates, displacement_tensor,
+        
 
 class TransformerEncoderWithPair(nn.Module):
     def __init__(
@@ -498,14 +569,12 @@ class TransformerDecoderWithPair(nn.Module):
         self.t_embedder = get_timestep_embedding_func(time_embedding_type, embed_dim, embedding_scale = max_time**1.5)
         self.attention_heads = attention_heads
         self.update_distance_matrix = update_distance_matrix
-        if update_distance_matrix:
-            #create a projection for each layer to update the distance matrix
-            # self.dist_update_proj = nn.Linear(attention_heads, attention_heads, bias=False)
-            self.dist_update_proj = nn.ModuleList([
-                nn.Linear(attention_heads, attention_heads, bias=False)
-                for _ in range(encoder_layers)
-            ])
-            # Need to change in the feature move the gbj kernal from the outter network to here.
+        self.se3_equiv_layers = nn.ModuleList(
+            [
+            SE3ELayer(attention_heads, update_distance_matrix)
+            for _ in range(encoder_layers)
+            ]
+        )
         self.emb_layer_norm = LayerNorm(self.embed_dim)
         self.final_layer = DiTFinalLayer(embed_dim, embed_dim)
         self.sigmoid = nn.Sigmoid()
@@ -590,46 +659,16 @@ class TransformerDecoderWithPair(nn.Module):
         assert attn_mask is not None
         attn_mask, padding_mask = fill_attn_mask(attn_mask, padding_mask)
         coordinates = coordinates.repeat(self.attention_heads, 1, 1).view(self.attention_heads, bsz, seq_len, d).transpose(0,1).contiguous() # [bsz, head, seq_len, d]
-        if self.update_distance_matrix:
-            old_distance_matrix = get_distance_matrix(coordinates.view(bsz*self.attention_heads, seq_len, d)) # [bsz*head, seq_len, seq_len]
         for i in range(len(self.layers)):
-            x, attn_mask,_,attn_disp = self.layers[i](
+            x, attn_mask,attn_prob,attn_disp,attn_disp_prob = self.layers[i](
                 x,t, padding_mask=padding_mask, attn_bias=attn_mask, return_attn=True
             )
             # print("Attention mask shape: ", attn_mask.shape) # [bsz*head, seq_len, seq_len]
             # print("Attention prob shape: ", attn_prob.shape) # [bsz*head, seq_len, seq_len]
             # print("x shape: ", x.shape) # [bsz, seq_len, embed_dim]
             attn_disp = attn_disp.view(bsz, self.attention_heads, seq_len, seq_len).contiguous() # [bsz, head, seq_len, seq_len]
-            normalizer = torch.sqrt(torch.sum(~torch.isinf(attn_disp),axis = -1))
-            # fill -inf with 0
-            inf_mask = torch.isinf(attn_disp)
-            attn_disp = 2*(self.sigmoid(attn_disp) - 0.5) # -1 to +1
-            attn_disp[inf_mask] = 0
-            # attn_disp = nn.SiLU
-            #project attn_mask with self.atten_proj
-            # attn_disp = self.atten_proj(attn_mask.permute(0,2,3,1)).permute(0,3,1,2) # [bsz, head, seq_len, seq_len]
-            
-            
-            # SE(3)-equivariant branch
-            displacement_tensor = displacement(coordinates.view(bsz*self.attention_heads, seq_len, d)).view(bsz, self.attention_heads, seq_len, seq_len, d) # [bsz, head, seq_len, seq_len, d]
-            displacement_tensor = attn_disp.unsqueeze(-1) * displacement_tensor # [bsz, head, seq_len, seq_len, d]
-            # non_zero = (displacement)
-            displacement_tensor = displacement_tensor.sum(dim=-2) # [bsz, head, seq_len, d]
-            displacement_tensor = displacement_tensor / (normalizer.unsqueeze(-1) + 1e-5) # divide by sqrt(d)
-            #normalize by the sqrt of number of non-zero elements
-            
-
-            coordinates = coordinates + displacement_tensor # [bsz, head, seq_len, d]
-
-            if self.update_distance_matrix:
-                # update the attn_mask
-                distance_matrix = get_distance_matrix(coordinates.view(bsz*self.attention_heads, seq_len, d)) # [bsz*head, seq_len, seq_len]
-                delta_distance_matrix = distance_matrix - old_distance_matrix
-                old_distance_matrix = distance_matrix
-                delta_distance_matrix = delta_distance_matrix.view(bsz,-1,seq_len,seq_len).permute(0,2,3,1).contiguous() # [bsz, seq_len, seq_len, head]
-                delta_distance_matrix = self.dist_update_proj[i](delta_distance_matrix)
-                delta_distance_matrix = delta_distance_matrix.permute(0,3,1,2).contiguous() # [bsz, head, seq_len, seq_len]
-                attn_mask = attn_mask +  delta_distance_matrix.view(-1,seq_len,seq_len)# d exp{(-Ax+b)^2} = -2(Ax+b) exp{(-Ax+b)^2} dx
+            attn_disp_prob = attn_disp_prob.view(bsz, self.attention_heads, seq_len, seq_len).contiguous() # [bsz, head, seq_len, seq_len]
+            attn_disp,attn_mask, coordinates, displacement_tensor = self.se3_equiv_layers[i](attn_disp_prob, attn_mask, coordinates)
             
         x = self.final_layer(x, t) # [bsz, seq_len, embed_dim]
 

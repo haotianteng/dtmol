@@ -12,6 +12,7 @@ args = {
         'start_lr_factor': 1e-2,
         'lr_scheduler': 'LinearLR',
         'lr_warmup': 5,
+        'grad_norm': None,
         'epoches': 500,
         'report_every': 100,
         'valid_first_n': 10,
@@ -75,6 +76,7 @@ def parse_args():
     parser.add_argument("--retrain",type = str,default=None)
     parser.add_argument("--learning_rate",type=float,default=None)
     parser.add_argument("--start_lr_factor",type=float,default=None)
+    parser.add_argument("--grad_norm",type=float,default=None)
     parser.add_argument("--lr_scheduler",type=str,default=None,
                         help = "Choose from ['LinearLR','CosineAnnealingLR','CosineAnnealingWarmRestarts']")
     parser.add_argument("--lr_warmup",type=int,default=None)
