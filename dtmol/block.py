@@ -855,6 +855,54 @@ class DiffusionPoolHead(nn.Module):
         x: the output of the embedding with shape [B, N, D]
         y: the displacement tensor with shape [B, H, N, 3]
         """
+        bsz, n, d = x.size()
+        x = self.dropout(x)
+        x = self.linear1(x)
+        x = self.activation_fn(x)
+        x = self.dropout(x)
+        x = self.out_proj(x)
+        y = y.permute(0,2,3,1) # [B, N, 3, H]
+        y = self.out_proj2(y) # [B, N, 3, O/3]
+        y = y.reshape(bsz,n,self.out_dim) # [B, N, O]
+        out = self.x_gate(x)*y # [B, N, O]
+        return out.mean(dim=1)
+
+    def loss(self, output, score, norm, norm_weighted = False):
+        loss = self.mse_loss(output, score)
+        if norm_weighted:
+            loss = loss / norm.unsqueeze(-1)
+        return loss.mean()
+
+class DiffusionClassificationHead(nn.Module):
+    """Head for system-level diffusion noise."""
+
+    def __init__(
+        self,
+        input_dim,
+        input_dim2,
+        out_dim,
+        activation_fn,
+        hidden_dim=None,
+        dropout = 0.1,
+        coord_dim = 3,
+    ):
+        super().__init__()
+        hidden_dim = input_dim if not hidden_dim else hidden_dim
+        assert out_dim % coord_dim == 0, "Output dimension must be divisible by coord_dim"
+        self.out_dim = out_dim
+        self.linear1 = nn.Linear(input_dim, hidden_dim)
+        self.out_proj = nn.Linear(hidden_dim, out_dim)
+        self.x_gate = nn.Sigmoid()
+        self.out_proj2 = nn.Linear(input_dim2, out_dim//coord_dim, bias = False)
+        self.dropout = nn.Dropout(p=dropout)
+        self.activation_fn = get_activation_fn(activation_fn)()
+        self.mse_loss = nn.MSELoss(reduction="none")
+
+    def forward(self, x ,y):
+        """
+        x: the output of the embedding with shape [B, N, D]
+        y: the displacement tensor with shape [B, H, N, 3]
+        """
         x = x[:, 0, :]  # take <s> token (equiv. to [CLS])
         y = y[:,:,0,:] # [B, H, 3]
         x = self.dropout(x)

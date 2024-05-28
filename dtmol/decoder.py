@@ -1,7 +1,7 @@
 from typing import Dict
 from torch import nn
 import torch
-from dtmol.block import TransformerDecoderWithPair, DiffusionHead,DiffusionPoolHead, NonLinearHead, GaussianAttentionLayer
+from dtmol.block import TransformerDecoderWithPair, DiffusionHead,DiffusionPoolHead, NonLinearHead, GaussianAttentionLayer, get_distance_matrix
 import logging
 logger = logging.getLogger(__name__)
 
@@ -92,6 +92,8 @@ class Decoder(nn.Module):
         """
         full_embd = torch.cat([embd_molecule, embd_protein], dim=1)
         full_coor = torch.cat([coor_molecule, coor_protein], dim=1)
+        n_molecule = embd_molecule.size(1)
+        n_protein = embd_protein.size(1)
         with torch.no_grad():
             # calculate the mean but ignore the inf values
             inf_mask = torch.isinf(coor_molecule)
@@ -100,13 +102,16 @@ class Decoder(nn.Module):
             # Set the first coordinate to the center of the ligand 
             # (which will be used tp calculate the system score later), as intuitively the translation is the linear acceleration of the center of mass of the ligand
             coor_molecule[torch.isnan(coor_molecule)] = torch.inf
+            # Update the cross distance matrix
+            mask = torch.isinf(cross_distance)
+            full_distance = get_distance_matrix(full_coor, coor_protein)
+            cross_distance = full_distance[:, :n_molecule, :]
+
         if padding_molecule is None:
             padding_molecule = torch.zeros(embd_molecule.size(0), embd_molecule.size(1),dtype = torch.bool).to(embd_molecule.device)
         if padding_protein is None:
             padding_protein = torch.zeros(embd_protein.size(0), embd_protein.size(1),dtype = torch.bool).to(embd_protein.device)
         full_padding = torch.cat([padding_molecule, padding_protein], dim=1)
-        n_molecule = embd_molecule.size(1)
-        n_protein = embd_protein.size(1)
         bsz = embd_molecule.size(0)
         n_full = cross_distance.size(1) + cross_distance.size(2)
         assert n_full == n_molecule + n_protein
@@ -122,6 +127,8 @@ class Decoder(nn.Module):
             graph_attn_bias[:, :, :n_molecule, n_molecule:] = cross_attn_bias.clone()
             graph_attn_bias[:, :, n_molecule:, :n_molecule] = cross_attn_bias.permute(0, 1, 3, 2).contiguous().clone()
             graph_attn_bias = graph_attn_bias.view(-1, n_full, n_full) # [bsz*head, n_node, n_node]
+
+            
             return graph_attn_bias
         full_attn = get_cross_attn(attn_mole, attn_protein, cross_distance, cross_edges)
         (
