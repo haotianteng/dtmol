@@ -117,7 +117,7 @@ class DiffusionTrainer(Trainer):
                     self.save()
                 if (i_step+1) % valid_every_n_steps == 0:
                     with torch.no_grad():
-                        rotation_losses, translation_losses, pert_losses = [], []
+                        rotation_losses, translation_losses, pert_losses = [], [], []
                         for valid_i,valid_batch in enumerate(self.eval_ds):
                             rot_loss,tr_loss,pert_loss = self.valid_step(valid_batch)
                             if rot_loss is not None:
@@ -131,7 +131,7 @@ class DiffusionTrainer(Trainer):
                         translation_loss = np.mean(translation_losses) if self.config.TRAIN['trrot_loss'] else 0.0
                         pert_loss = np.mean(pert_losses) if self.config.TRAIN['perturbation_loss'] else 0.0
                         if self._on_main_rank():
-                            msg = f"Epoch {epoch_i}: Step {i_step}, train loss {loss:.4f}" 
+                            msg = f"Epoch {epoch_i}: Step {i_step}, train loss {loss:.4f}, " 
                             msg += f"valid rotation loss {rotation_loss:.4f}, "
                             msg += f"valid translation loss {translation_loss:.4f}, "
                             msg += f"perturbation loss {pert_loss:.4f}"

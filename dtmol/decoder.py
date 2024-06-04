@@ -150,7 +150,6 @@ class Decoder(nn.Module):
                 scores[head] = self.diffusion_heads[head](decoder_rep,displacement_tensor)
             return scores, full_padding
         
-
     def register_diffusion_head(
         self, name, out_dim=None, hidden_dim=None,
     ):
