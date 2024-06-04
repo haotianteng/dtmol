@@ -139,21 +139,27 @@ class DiffusionTrainer(Trainer):
             if schedular is not None:
                 schedular.step()
 
-    def loss(self, output, padding_mask, batch,norm_weighted = False):
+    def loss(self, output, padding_mask, batch,norm_weighted = False, validation = False):
+        if validation:
+            reduction = "none"
+        else:
+            reduction = "mean"
         if self.distributed:
             losses = self.nets.module.diffusion_loss(output, 
                                                      padding_mask.clone(), 
                                                      batch['diffused'], 
                                                      norm_weighted=norm_weighted,
                                                      trrot_diffusion = self.config.TRAIN['trrot_loss'],
-                                                     perturbation_diffusion = self.config.TRAIN['perturbation_loss'])
+                                                     perturbation_diffusion = self.config.TRAIN['perturbation_loss'],
+                                                     reduction = reduction)
         else:
             losses = self.nets.diffusion_loss(output, 
                                               padding_mask.clone(), 
                                               batch['diffused'],
                                               norm_weighted=norm_weighted,
                                               trrot_diffusion = self.config.TRAIN['trrot_loss'],
-                                              perturbation_diffusion = self.config.TRAIN['perturbation_loss'])
+                                              perturbation_diffusion = self.config.TRAIN['perturbation_loss'],
+                                              reduction = reduction)
         return losses
 
     def rmsd(self, coord, label, mole_padding, prot_padding):
@@ -169,11 +175,17 @@ class DiffusionTrainer(Trainer):
     def valid_step(self, batch):
         with torch.no_grad():
             output, padding_mask = self.nets(batch)
-            losses = self.loss(output, padding_mask, batch,norm_weighted=False)
-            trrot_loss = losses['trrot_loss'] if self.config.TRAIN['trrot_loss'] else None
-            pert_loss = losses['perturbation_loss'] if self.config.TRAIN['perturbation_loss'] else None    
+            losses = self.loss(output, padding_mask, batch,norm_weighted=False, validation = True)
+            trrot_loss = losses['trrot_loss'] if self.config.TRAIN['trrot_loss'] else None #shape [batch_size, 2, 3]
+            pert_loss = losses['perturbation_loss'] if self.config.TRAIN['perturbation_loss'] else None #shape [batch_size, N, 3]
+            print(pert_loss.shape)
+            pert_loss = pert_loss.mean() if pert_loss is not None else None
+            rotation_loss = trrot_loss[:,0,:].mean() if trrot_loss is not None else None
+            translation_loss = trrot_loss[:,1,:].mean() if trrot_loss is not None else None
             if self.use_wandb and self._on_main_rank():
-                wandb.log({"valid_trrot_loss": trrot_loss,"perturbation loss":pert_loss, "global_step": self.global_step})
+                wandb.log({"valid_rotation_loss": rotation_loss,
+                           "valid_translation_loss": translation_loss, 
+                           "perturbation loss":pert_loss, "global_step": self.global_step})
         return trrot_loss, pert_loss
 
     def eval_step(self, batch):

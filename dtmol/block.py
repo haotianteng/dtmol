@@ -805,7 +805,10 @@ class DiffusionHead(nn.Module):
         y = y.reshape(bsz,n,self.out_dim) # [B, N, O]
         return self.x_gate(x)*y
 
-    def loss(self, output, score, norm, padding_mask = None, norm_weighted = False):
+    def loss(self, output, score, norm, 
+             padding_mask = None, 
+             norm_weighted = False,
+             reduction = "mean"):
         loss = self.mse_loss(output, score)
 
         # ### Debugging code ###
@@ -823,7 +826,15 @@ class DiffusionHead(nn.Module):
         if padding_mask is not None:
             mask = mask * (~padding_mask.unsqueeze(-1))
             loss = loss * (~padding_mask.unsqueeze(-1))
-        return loss[mask.squeeze(-1)].mean()
+        loss = loss[mask.squeeze(-1)]
+        if reduction == "mean":
+            return loss.mean()
+        elif reduction == "none":
+            return loss
+        elif reduction == "sum":
+            return loss.sum()
+        else:
+            raise ValueError("Invalid reduction type")
 
 class DiffusionPoolHead(nn.Module):
     """Head for system-level diffusion noise."""
@@ -863,15 +874,23 @@ class DiffusionPoolHead(nn.Module):
         x = self.out_proj(x)
         y = y.permute(0,2,3,1) # [B, N, 3, H]
         y = self.out_proj2(y) # [B, N, 3, O/3]
+        y = y.permute(0,1,3,2) # [B, N, O/3, 3]
         y = y.reshape(bsz,n,self.out_dim) # [B, N, O]
         out = self.x_gate(x)*y # [B, N, O]
         return out.mean(dim=1)
 
-    def loss(self, output, score, norm, norm_weighted = False):
+    def loss(self, output, score, norm, norm_weighted = False,reduction = "mean"):
         loss = self.mse_loss(output, score)
         if norm_weighted:
             loss = loss / norm.unsqueeze(-1)
-        return loss.mean()
+        if reduction == "mean":
+            return loss.mean()
+        elif reduction == "none":
+            return loss
+        elif reduction == "sum":
+            return loss.sum()
+        else:
+            raise ValueError("Invalid reduction type")
 
 class DiffusionClassificationHead(nn.Module):
     """Head for system-level diffusion noise."""
@@ -912,14 +931,22 @@ class DiffusionClassificationHead(nn.Module):
         x = self.out_proj(x)
         y = y.transpose(1, 2) # [B, 3, H]
         y = self.out_proj2(y) # [B, 3, O/3]
+        y = y.permute(0,2,1) # [B, O/3, 3]
         y = y.reshape(-1,self.out_dim) # [B, O]
         return self.x_gate(x)*y
 
-    def loss(self, output, score, norm, norm_weighted = False):
+    def loss(self, output, score, norm, norm_weighted = False,reduction = "mean"):
         loss = self.mse_loss(output, score)
         if norm_weighted:
             loss = loss / norm.unsqueeze(-1)
-        return loss.mean()
+        if reduction == "mean":
+            return loss.mean()
+        elif reduction == "none":
+            return loss
+        elif reduction == "sum":
+            return loss.sum()
+        else:
+            raise ValueError("Invalid reduction type")
 
 class NonLinearHead(nn.Module):
     """Head for simple classification tasks."""

@@ -191,7 +191,8 @@ class ScoreNetwork(nn.ModuleDict):
                        perturbation_diffusion = True, 
                        trrot_diffusion = True, 
                        atom_diffusion=False, 
-                       norm_weighted=False):
+                       norm_weighted=False,
+                       reduction = "mean"):
         if not(perturbation_diffusion) and not(trrot_diffusion) and not(atom_diffusion):
             raise ValueError("No diffusion loss has been enabled.")
         losses = {}
@@ -209,7 +210,8 @@ class ScoreNetwork(nn.ModuleDict):
             trrot_loss = self['decoder'].diffusion_heads['tr-rotation'].loss(tr_rot, 
                                                                             mol_trrot_score, 
                                                                             norm = mol_trrot_norm,
-                                                                            norm_weighted = True)
+                                                                            norm_weighted = True,
+                                                                            reduction = reduction)
             losses['trrot_loss'] = (self.trrot_weight*trrot_loss)
         if perturbation_diffusion:
             padding_mask[:,0] = True # The first token <s> is for the tr-rotation loss
@@ -217,7 +219,8 @@ class ScoreNetwork(nn.ModuleDict):
                                                                             perturbation_score, 
                                                                             norm = perturbation_norm, 
                                                                             padding_mask = padding_mask, 
-                                                                            norm_weighted = norm_weighted)
+                                                                            norm_weighted = norm_weighted,
+                                                                            reduction = reduction)
             losses["perturbation_loss"] = self.pert_weight*pert_loss
         if atom_diffusion:
             raise NotImplementedError("Atom diffusion is not implemented yet.")
