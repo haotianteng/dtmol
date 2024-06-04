@@ -183,7 +183,6 @@ class DiffusionTrainer(Trainer):
             losses = self.loss(output, padding_mask, batch,norm_weighted=False, validation = True)
             trrot_loss = losses['trrot_loss'] if self.config.TRAIN['trrot_loss'] else None #shape [batch_size, 2, 3]
             pert_loss = losses['perturbation_loss'] if self.config.TRAIN['perturbation_loss'] else None #shape [batch_size, N, 3]
-            print(pert_loss.shape)
             pert_loss = pert_loss.mean() if pert_loss is not None else None
             rotation_loss = trrot_loss[:,0,:].mean() if trrot_loss is not None else None
             translation_loss = trrot_loss[:,1,:].mean() if trrot_loss is not None else None
