@@ -117,19 +117,24 @@ class DiffusionTrainer(Trainer):
                     self.save()
                 if (i_step+1) % valid_every_n_steps == 0:
                     with torch.no_grad():
-                        trrot_losses, pert_losses = [], []
+                        rotation_losses, translation_losses, pert_losses = [], []
                         for valid_i,valid_batch in enumerate(self.eval_ds):
-                            trrot_loss,pert_loss = self.valid_step(valid_batch)
-                            if trrot_loss is not None:
-                                trrot_losses.append(trrot_loss.item())
+                            rot_loss,tr_loss,pert_loss = self.valid_step(valid_batch)
+                            if rot_loss is not None:
+                                rotation_losses.append(rot_loss.item())
+                                translation_losses.append(tr_loss.item())
                             if pert_loss is not None:
                                 pert_losses.append(pert_loss.item())
                             if valid_i > self.config.TRAIN['valid_first_n']:
                                 break
-                        trrot_loss = np.mean(trrot_losses) if self.config.TRAIN['trrot_loss'] else 0.0
+                        rotation_loss = np.mean(rotation_losses) if self.config.TRAIN['trrot_loss'] else 0.0
+                        translation_loss = np.mean(translation_losses) if self.config.TRAIN['trrot_loss'] else 0.0
                         pert_loss = np.mean(pert_losses) if self.config.TRAIN['perturbation_loss'] else 0.0
                         if self._on_main_rank():
-                            msg = f"Epoch {epoch_i}: Step {i_step}, train loss {loss:.4f}, valid trrot_loss {trrot_loss:.4f}, perturbation loss {pert_loss:.4f}"
+                            msg = f"Epoch {epoch_i}: Step {i_step}, train loss {loss:.4f}" 
+                            msg += f"valid rotation loss {rotation_loss:.4f}, "
+                            msg += f"valid translation loss {translation_loss:.4f}, "
+                            msg += f"perturbation loss {pert_loss:.4f}"
                             self.logger.info(msg)
                             if self.use_wandb:
                                 wandb.log({"epoch":epoch_i,
@@ -185,8 +190,9 @@ class DiffusionTrainer(Trainer):
             if self.use_wandb and self._on_main_rank():
                 wandb.log({"valid_rotation_loss": rotation_loss,
                            "valid_translation_loss": translation_loss, 
-                           "perturbation loss":pert_loss, "global_step": self.global_step})
-        return trrot_loss, pert_loss
+                           "perturbation loss":pert_loss, 
+                           "global_step": self.global_step})
+        return rotation_loss, translation_loss, pert_loss
 
     def eval_step(self, batch):
         with torch.no_grad():
