@@ -36,6 +36,7 @@ args = {
         'pert_weight': 1.0, #Currently have no effect
         'independent_se3_attention': True,
         'update_distance_matrix': False,
+        'use_cross_product_update': False,
         },
     'dataset':
     {
@@ -102,6 +103,8 @@ def parse_args():
                         help = "Use the same attention for the coordinates and the features")
     parser.add_argument("--update_distance_matrix",action='store_true',
                         help = "Update the distance matrix in the diffusion process")
+    parser.add_argument("--cross_product_update",action='store_true',dest='use_cross_product_update',
+                        help = "Enable the cross product update for the coordinates in the diffusion process")
 
     ### Diffusion settings
     parser.add_argument("--tr_sigma_min",type = float,default = None)

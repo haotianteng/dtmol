@@ -26,6 +26,7 @@ def base_architecture(args):
     args.max_diffusion_time = getattr(args, "max_diffusion_time", 5000)
     args.independent_se3_attention = getattr(args, "independent_se3_attention", True)
     args.update_distance_matrix = getattr(args, "update_distance_matrix", False)
+    args.use_cross_product_update = getattr(args, "use_cross_product_update", False)
 
 class Decoder(nn.Module):
     def __init__(self, config, dictionary) -> None:
@@ -49,6 +50,7 @@ class Decoder(nn.Module):
             max_time = config.max_diffusion_time,
             independent_SE3_attention = config.independent_se3_attention,
             update_distance_matrix=config.update_distance_matrix,
+            use_cross_product_update=config.use_cross_product_update,
         )
         self.gbf_proj = NonLinearHead(
             input_dim=config.n_gaussian_basis,
