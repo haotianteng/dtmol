@@ -352,8 +352,9 @@ class SE3ELayer(nn.Module):
         self.norm_attn = nn.LayerNorm(heads, elementwise_affine=False, eps=1e-6)
         self.norm_disp = nn.LayerNorm(heads, elementwise_affine=False, eps=1e-6)
         self.disp_proj = nn.Linear(heads, heads)
-        self.attn_proj = nn.Linear(heads, heads)
+        self.attn_proj = nn.Linear(heads, 2*heads)
         self.sigmoid = nn.Sigmoid()
+        self.silu = nn.SiLU()
         self.update_distance_matrix = update_distance_matrix
         if update_distance_matrix:
             self.dist_update_proj = nn.Linear(heads, heads, bias=False)
@@ -374,14 +375,17 @@ class SE3ELayer(nn.Module):
         attn_disp = attn_disp.permute(0,2,3,1).contiguous() # [B, N, N, H]
         inf_mask = torch.isinf(attn_disp)
         attn_disp = attn_disp.masked_fill(inf_mask, 0)
-        attn_disp = self.attn_proj(attn_disp) # [B, N, N, H]
+        attn_disp = self.attn_proj(attn_disp) # [B, N, N, 2 * H]
         attn_disp = self.norm_attn(attn_disp)
-        attn_disp = self.sigmoid(attn_disp)
-        attn_disp = attn_disp.masked_fill(inf_mask, 0)
-        attn_disp = attn_disp.permute(0,3,1,2).contiguous() # [B, H, N, N]
-        # attn_disp = nn.SiLU
+        # attn_disp = self.sigmoid(attn_disp)
+        attn_disp = self.silu(attn_disp)
+        attn_disp_plus = attn_disp[..., :self.attention_heads] # [B, N, N, H]
+        attn_disp_cross = attn_disp[..., self.attention_heads:] # [B, N, N, H]
+        attn_disp_plus = attn_disp_plus.masked_fill(inf_mask, 0)
+        attn_disp_cross = attn_disp_cross.masked_fill(inf_mask, 0)
+        attn_disp_plus = attn_disp_plus.permute(0,3,1,2).contiguous() # [B, H, N, N]
+        attn_disp_cross = attn_disp_cross.permute(0,3,1,2).contiguous() # [B, H, N, N]
         #project attn_mask with self.atten_proj
-        # attn_disp = self.atten_proj(attn_mask.permute(0,2,3,1)).permute(0,3,1,2) # [bsz, head, seq_len, seq_len]
         
         
         # SE(3)-equivariant branch
@@ -390,14 +394,16 @@ class SE3ELayer(nn.Module):
         displacement_tensor = self.disp_proj(displacement_tensor)
         displacement_tensor = self.norm_disp(displacement_tensor)
         displacement_tensor = displacement_tensor.permute(0,4,1,2,3) # [bsz, head, seq_len, seq_len, d]
-        displacement_tensor = attn_disp.unsqueeze(-1) * displacement_tensor # [bsz, head, seq_len, seq_len, d]
+        displacement_tensor_plus = attn_disp_plus.unsqueeze(-1) * displacement_tensor # [bsz, head, seq_len, seq_len, d]
+        displacement_tensor_cross = attn_disp_cross.unsqueeze(-1) * displacement_tensor # [bsz, head, seq_len, seq_len, d]
         # non_zero = (displacement)
-        displacement_tensor = displacement_tensor.sum(dim=-2) # [bsz, head, seq_len, d]
-        displacement_tensor = displacement_tensor / (normalizer.unsqueeze(-1) + 1e-5) # divide by sqrt(d)
+        displacement_tensor_plus = displacement_tensor_plus.sum(dim=-2) # [bsz, head, seq_len, d]
+        displacement_tensor_plus = displacement_tensor_plus / (normalizer.unsqueeze(-1) + 1e-5) # divide by sqrt(d)
+        displacement_tensor_cross = displacement_tensor_cross.sum(dim=-2) # [bsz, head, seq_len, d]
+        displacement_tensor_cross = displacement_tensor_cross / (normalizer.unsqueeze(-1) + 1e-5)
         #normalize by the sqrt of number of non-zero elements
         
-
-        coordinates = coordinates + displacement_tensor # [bsz, head, seq_len, d]
+        coordinates = coordinates + displacement_tensor_plus + torch.cross(displacement_tensor_cross,coordinates,dim = -1) # [bsz, head, seq_len, d]
 
         if self.update_distance_matrix:
             # update the attn_mask
