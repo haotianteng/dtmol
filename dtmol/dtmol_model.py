@@ -81,7 +81,7 @@ class ScoreNetwork(nn.ModuleDict):
         else:
             return scheduler.get_time(t, current_T, orig_T)
 
-    def eval_once(self,batch,rev_sampler,T = 20, stochastic = False):
+    def eval_once(self,batch,rev_sampler,T = 20, stochastic = False ,record_intermediate = False):
         #copy the batch
         batch = copy.deepcopy(batch)
         n_batch = batch['net_input']['mol_src_coord'].size(0)
@@ -94,7 +94,8 @@ class ScoreNetwork(nn.ModuleDict):
         pocket_coord = batch['net_input']['pocket_holo_coord']
         n_mole = mol_coord.size(1)
         coord = torch.cat([mol_coord,pocket_coord],dim=1)
-        coord[torch.isinf(coord)] = 0 #Fill the padding inf coordinates with 0.
+        if record_intermediate:
+            ensembel = []
         ### debugging code ###
         # orig_coord = coord.clone()
         ######
@@ -105,6 +106,7 @@ class ScoreNetwork(nn.ModuleDict):
             batch['net_input']['pocket_diffuse_time'] = torch.tensor([t]*n_batch,device=pocket_coord.device).unsqueeze(1)
             score_dict, mole_padding, prot_padding = self.forward(batch, training=False)
             score = torch.cat([score_dict['tr-rotation'].view(-1,2,3),score_dict['perturbation']],dim=1)
+            coord[torch.isinf(coord)] = torch.nan #Fill the padding inf coordinates with nan to use nanmean.
             coord,distance = reverse_sampling(coord, 
                                               score, 
                                               mole_sampler=mole_sampler,
@@ -113,8 +115,9 @@ class ScoreNetwork(nn.ModuleDict):
                                               prot_padding=prot_padding,
                                               t=i,
                                               stochastic = stochastic,)
+            coord[torch.isnan(coord)] = torch.inf #reverse back the nan to inf
             batch['net_input']['mol_src_coord'] = coord[:,:n_mole,:]
-            batch['net_input']['src_coord'] = coord[:,n_mole:,:]
+            batch['net_input']['src_coord'] = coord[:,n_mole:,:] #change this to pocket_holo_coord to enable flexible pocket chain
             batch['net_input']['mol_src_distance'] = distance[:,:n_mole,:n_mole]
             batch['net_input']['pocket_distance'] = distance[:,n_mole:,n_mole:]
             batch['net_input']['cross_distance'] = distance[:,:n_mole,n_mole:]
@@ -125,9 +128,13 @@ class ScoreNetwork(nn.ModuleDict):
             # prot_diff = torch.norm(pocket_coord.cpu()-batch['net_input']['src_coord'].cpu())
             # print(f"Time: {current_time}, Timestep: {i}, Molecule diff: {mole_diff}, Protein diff: {prot_diff}")
             ###
+            if record_intermediate:
+                ensembel.append(coord)
+            else:
+                ensembel = [coord]
         mole_sampler.set_T(orig_T)
         prot_sampler.set_T(orig_T)
-        return coord, mole_padding, prot_padding
+        return ensembel, mole_padding, prot_padding
 
     def forward(self,batch,training = True):
         if training:

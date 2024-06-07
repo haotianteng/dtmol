@@ -28,6 +28,7 @@ args = {
         'mode': 'train', #Can be 'train', 'debug', 'test' mode
         'max_reverse_diffusion_time': 20, #The maximum diffusion time for reverse diffusion
         'stochastic_reverse_sampling': False, #If use stochastic sampling when doing evaluation
+        'record_intermediate': None, #If record the intermediate results
     },
     'model':
     {
@@ -94,6 +95,8 @@ def parse_args():
                         help = "The maximum diffusion time for reverse diffusion, default is 20.")
     parser.add_argument("--stochastic_reverse_sampling",action='store_true',dest='stochastic_reverse_sampling',
                         help = "If use stochastic sampling when doing evaluation")
+    parser.add_argument("--record_intermediate",type = str,default=None,
+                        help = "The folder to record intermediate results")
 
     ### Model settings
     parser.add_argument("--dropout",type=float,default=0.1)

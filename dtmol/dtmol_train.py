@@ -60,6 +60,7 @@ class DiffusionTrainer(Trainer):
                     self.logger.info(msg)
                 mole_rmsds,prot_rmsds = [],[]
                 for eval_i,eval_batch in enumerate(self.eval_ds):
+                    self.eval_i = eval_i
                     mole_rmsd,mole_rmsd_baseline,prot_rmsd = self.eval_step(eval_batch)
                     mole_rmsd_mean, prot_rmsd_mean, mole_rmsd_baseline_mean = mole_rmsd.mean().item(),prot_rmsd.mean().item(),mole_rmsd_baseline.mean().item()
                     mole_rmsd_std, prot_rmsd_std, mole_rmsd_baseline_std = mole_rmsd.std().item(),prot_rmsd.std().item(), mole_rmsd_baseline.std().item()
@@ -196,18 +197,28 @@ class DiffusionTrainer(Trainer):
     def eval_step(self, batch):
         with torch.no_grad():
             if self.distributed:
-                coord,mole_padding,prot_padding = self.nets.module.eval_once(batch, self.sampler, 
+                ensembel,mole_padding,prot_padding = self.nets.module.eval_once(batch, self.sampler, 
                                                                             T = self.config.TRAIN['max_reverse_diffusion_time'],
-                                                                             stochastic=self.config.TRAIN['stochastic_reverse_sampling'])
+                                                                             stochastic=self.config.TRAIN['stochastic_reverse_sampling'],
+                                                                             record_intermediate = self.config.TRAIN['record_intermediate'])
             else:
-                coord,mole_padding,prot_padding = self.nets.eval_once(batch, self.sampler, 
+                ensembel,mole_padding,prot_padding = self.nets.eval_once(batch, self.sampler, 
                                                                       T = self.config.TRAIN['max_reverse_diffusion_time'],
-                                                                      stochastic=self.config.TRAIN['stochastic_reverse_sampling'])
+                                                                      stochastic=self.config.TRAIN['stochastic_reverse_sampling'],
+                                                                      record_intermediate = self.config.TRAIN['record_intermediate'])
             label = self.get_label_coord(batch)
+            coord = ensembel[-1]
             mole_rmsd,prot_rmsd = self.rmsd(coord, label, mole_padding, prot_padding)
             #calculate the original rmsd
             orig_coord = torch.cat([batch['net_input']['mol_src_coord'],batch['net_input']['pocket_src_coord']],dim=1)
             mole_rmsd_ori,prot_rmsd_ori = self.rmsd(orig_coord,label,mole_padding, prot_padding)
+            if self.config.TRAIN['record_intermediate'] and self._on_main_rank():
+                self.record_intermediate(ensembel,
+                                         label,
+                                         mole_padding, 
+                                         prot_padding, 
+                                         batch['net_input']['mol_tokens'],
+                                         batch['net_input']['pocket_tokens'])
         return mole_rmsd, mole_rmsd_ori, prot_rmsd
     
     def get_label_coord(self, batch):
@@ -217,6 +228,58 @@ class DiffusionTrainer(Trainer):
     def record_config(self,config):
         if self.use_wandb:
             wandb.config.update(config)
+
+    def record_intermediate(self,ensembel,label,mole_padding, prot_padding, mol_token, protein_token):
+        n_mole = mole_padding.size(1)
+        #save the intermediate coordinates to the model folder
+        out_f = self.config.TRAIN['record_intermediate']
+        out_f = os.path.join(out_f,f"global_step_{self.global_step}")
+        batch_size = self.eval_ds.dataloader.batch_size
+        os.makedirs(out_f,exist_ok=True)
+        with torch.no_grad():
+            for t,coord in enumerate(ensembel):
+                coord[torch.isnan(coord)] = torch.inf
+                coord_mole = coord[:,:n_mole,:]
+                coord_prot = coord[:,n_mole:,:]
+                label_mole = label[:,:n_mole,:]
+                out_t = os.path.join(out_f,f"t{t}")
+                os.makedirs(out_t,exist_ok=True)
+                count = 0
+                for coord_mole_i,coord_prot_i,coord_label_i,mol_token_i, protein_token_i in zip(coord_mole,coord_prot, label_mole, mol_token, protein_token):
+                    idx = self.eval_i * batch_size + count
+                    if idx >= self.config.TRAIN['valid_first_n']:
+                        break
+                    curr_out = os.path.join(out_t,f"{idx}")
+                    mol_token_i = mol_token_i[~torch.isinf(coord_mole_i).any(dim=1)]
+                    protein_token_i = protein_token_i[~torch.isinf(coord_prot_i).any(dim=1)]
+                    coord_mole_i = coord_mole_i[~torch.isinf(coord_mole_i).any(dim=1),:]
+                    coord_prot_i = coord_prot_i[~torch.isinf(coord_prot_i).any(dim=1),:]
+                    coord_label_i = coord_label_i[~torch.isinf(coord_label_i).any(dim=1),:]
+                    coord_all = torch.empty((coord_mole_i.size(0)+coord_prot_i.size(0)+coord_label_i.size(0),4),dtype = coord_mole_i.dtype)
+                    coord_all[:coord_mole_i.size(0),:3] = coord_mole_i
+                    coord_all[coord_mole_i.size(0):coord_mole_i.size(0)+coord_prot_i.size(0),:3] = coord_prot_i
+                    coord_all[coord_mole_i.size(0)+coord_prot_i.size(0):,:3] = coord_label_i
+                    coord_all[:coord_mole_i.size(0),3] = 1
+                    coord_all[coord_mole_i.size(0):coord_mole_i.size(0)+coord_prot_i.size(0),3] = 2
+                    coord_all[coord_mole_i.size(0)+coord_prot_i.size(0):,3] = 3
+                    coord_all = coord_all.cpu().numpy()
+                    # print(coord_all.shape)
+                    # print(coord_all[:10])
+                    assert not (np.isnan(coord_all).any())
+                    assert not (np.isinf(coord_all).any())
+                    
+                    if self.use_wandb:                    
+                        wandb.log({"coord":wandb.Object3D(coord_all),
+                                "reverse_diffusion_time":t,
+                                "step":self.global_step,
+                                "idx":idx})
+                    count += 1
+                    out_dict = {"mol_token":mol_token_i,
+                                "protein_token":protein_token_i,
+                                "coord_mole":coord_mole_i,
+                                "coord_prot":coord_prot_i,
+                                "coord_label":coord_label_i}
+                    torch.save(out_dict,curr_out)
 
 def worker(idx,world_size,args):
     distributed = world_size > 1
