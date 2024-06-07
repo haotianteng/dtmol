@@ -91,7 +91,7 @@ def get_dataloader(dataset,
         data_loader = DataLoader(ds,
                                 collate_fn = ds.collater,
                                 batch_size = batch_size,
-                                shuffle = (sampler is None),
+                                shuffle = (sampler is None) and (s != 'valid'),
                                 sampler = sampler)
         loaders[s] = DeviceDataLoader(data_loader,device = device)
     return loaders
