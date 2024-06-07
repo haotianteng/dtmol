@@ -236,50 +236,49 @@ class DiffusionTrainer(Trainer):
         out_f = os.path.join(out_f,f"global_step_{self.global_step}")
         batch_size = self.eval_ds.dataloader.batch_size
         os.makedirs(out_f,exist_ok=True)
+        T = len(ensembel)
         with torch.no_grad():
-            for t,coord in enumerate(ensembel):
-                coord[torch.isnan(coord)] = torch.inf
-                coord_mole = coord[:,:n_mole,:]
-                coord_prot = coord[:,n_mole:,:]
-                label_mole = label[:,:n_mole,:]
-                out_t = os.path.join(out_f,f"t{t}")
-                os.makedirs(out_t,exist_ok=True)
-                count = 0
-                for coord_mole_i,coord_prot_i,coord_label_i,mol_token_i, protein_token_i in zip(coord_mole,coord_prot, label_mole, mol_token, protein_token):
-                    idx = self.eval_i * batch_size + count
-                    if idx >= self.config.TRAIN['valid_first_n']:
-                        break
-                    curr_out = os.path.join(out_t,f"{idx}")
+            for idx in range(batch_size):
+                global_idx = self.eval_i * batch_size + idx
+                curr_out = os.path.join(out_f,f"{global_idx}")
+                os.makedirs(curr_out,exist_ok=True)
+                if global_idx >= self.config.TRAIN['valid_first_n']:
+                    break
+                for t in range(T):
+                    coord = ensembel[t][idx]
+                    coord[torch.isnan(coord)] = torch.inf
+                    label_i = label[idx]
+                    mole_padding_i = mole_padding[idx]
+                    prot_padding_i = prot_padding[idx]
+                    mol_token_i = mol_token[idx]
+                    protein_token_i = protein_token[idx]
+                    coord_mole_i = coord[:n_mole,:]
+                    coord_prot_i = coord[n_mole:,:]
+                    label_mole_i = label_i[:n_mole,:]
                     mol_token_i = mol_token_i[~torch.isinf(coord_mole_i).any(dim=1)]
                     protein_token_i = protein_token_i[~torch.isinf(coord_prot_i).any(dim=1)]
                     coord_mole_i = coord_mole_i[~torch.isinf(coord_mole_i).any(dim=1),:]
                     coord_prot_i = coord_prot_i[~torch.isinf(coord_prot_i).any(dim=1),:]
-                    coord_label_i = coord_label_i[~torch.isinf(coord_label_i).any(dim=1),:]
-                    coord_all = torch.empty((coord_mole_i.size(0)+coord_prot_i.size(0)+coord_label_i.size(0),4),dtype = coord_mole_i.dtype)
-                    coord_all[:coord_mole_i.size(0),:3] = coord_mole_i
-                    coord_all[coord_mole_i.size(0):coord_mole_i.size(0)+coord_prot_i.size(0),:3] = coord_prot_i
-                    coord_all[coord_mole_i.size(0)+coord_prot_i.size(0):,:3] = coord_label_i
-                    coord_all[:coord_mole_i.size(0),3] = 1
-                    coord_all[coord_mole_i.size(0):coord_mole_i.size(0)+coord_prot_i.size(0),3] = 2
-                    coord_all[coord_mole_i.size(0)+coord_prot_i.size(0):,3] = 3
-                    coord_all = coord_all.cpu().numpy()
-                    # print(coord_all.shape)
-                    # print(coord_all[:10])
-                    assert not (np.isnan(coord_all).any())
-                    assert not (np.isinf(coord_all).any())
-                    
-                    if self.use_wandb:                    
-                        wandb.log({"coord":wandb.Object3D(coord_all),
-                                "reverse_diffusion_time":t,
-                                "step":self.global_step,
-                                "idx":idx})
-                    count += 1
+                    coord_label_i = label_mole_i[~torch.isinf(label_mole_i).any(dim=1),:]
                     out_dict = {"mol_token":mol_token_i,
                                 "protein_token":protein_token_i,
                                 "coord_mole":coord_mole_i,
                                 "coord_prot":coord_prot_i,
-                                "coord_label":coord_label_i}
-                    torch.save(out_dict,curr_out)
+                                "coord_label":label_mole_i}
+                    torch.save(out_dict,os.path.join(curr_out,f"t{t}"))
+                    if self.use_wandb:
+                        coord_all = torch.empty((coord_mole_i.size(0)+coord_prot_i.size(0)+coord_label_i.size(0),4),dtype = coord_mole_i.dtype)
+                        coord_all[:coord_mole_i.size(0),:3] = coord_mole_i
+                        coord_all[coord_mole_i.size(0):coord_mole_i.size(0)+coord_prot_i.size(0),:3] = coord_prot_i
+                        coord_all[coord_mole_i.size(0)+coord_prot_i.size(0):,:3] = coord_label_i
+                        coord_all[:coord_mole_i.size(0),3] = 1
+                        coord_all[coord_mole_i.size(0):coord_mole_i.size(0)+coord_prot_i.size(0),3] = 2
+                        coord_all[coord_mole_i.size(0)+coord_prot_i.size(0):,3] = 3
+                        coord_all = coord_all.cpu().numpy()
+                        wandb.log({"coord":wandb.Object3D(coord_all),
+                            "reverse_diffusion_time":t,
+                            "step":self.global_step,
+                            "idx":global_idx})
 
 def worker(idx,world_size,args):
     distributed = world_size > 1
