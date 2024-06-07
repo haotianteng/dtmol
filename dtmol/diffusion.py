@@ -589,7 +589,7 @@ class RotationSampler(BaseSampler):
         r_t = self._ve_kernel(np.zeros((B,D)),score,sigma_t,sigma_t_1,with_noise = stochastic)
         with torch.no_grad():
             Rot = torch.Tensor(Rotation.from_rotvec(r_t).as_matrix())
-            x_c = x.mean(axis = 1,keepdims = True)
+            x_c = torch.nanmean(x,axis = 1,keepdims = True)
             x_rev = torch.einsum('ijk,ilk->ilj',Rot,(x - x_c)) + x_c
         return x_rev
     
@@ -685,7 +685,7 @@ class TranslationSampler(BaseSampler):
     def dimensional_check(self,x,score):
         B,N,D = x.shape
         score_shape = score.shape
-        assert len(score_shape) == 2, "The score should be a system score with two dimensions (B,3)"
+        assert len(score_shape) == 2, "The score should be a system score with two dimensions (B,3), but got shape {}".format(score_shape)
         B1,D1 = score_shape
         assert B == B1, "The batch size of the input coordinates and the score should be the same."
         assert D1 == D, "The score should have the same dimension as the input coordinates."
@@ -703,7 +703,7 @@ class TranslationSampler(BaseSampler):
             t = np.asarray([t] * B)
         beta_t = self.noise[t][...,None] # (B,1)
         alpha_t = self.alphas[t][...,None] # (B,1)
-        x_c = x.mean(axis = 1) # (B,D)
+        x_c = np.nanmean(x,axis = 1) # (B,D)
         score = score if self.return_negative_score else -score # (B,D)
         x_c_rev = self._vp_kernel(x_c,score,beta_t,alpha_t,with_noise = stochastic)
         x_t = x - x_c[:,None,:] + x_c_rev[:,None,:]
@@ -724,7 +724,7 @@ class TranslationSampler(BaseSampler):
         sigma_t_1[t==0] = 0
         #Algorithm 3 predictor part in PC sampling (VE SDE) in Song et al., https://arxiv.org/pdf/2011.13456.pdf
         score = score if self.return_negative_score else -score
-        x_c = x.mean(axis = 1)
+        x_c = np.nanmean(x,axis = 1)
         x_c_diff = self._ve_kernel(np.zeros_like(x_c),score,sigma_t,sigma_t_1,with_noise = stochastic)
         x_t = x + x_c_diff[:,None,:]
         return torch.tensor(x_t)    
@@ -791,6 +791,7 @@ if __name__ == "__main__":
     #Test scheduler
     from matplotlib import pyplot as plt
     T = 500
+    test_nan = True
     linear_sch = LinearScheduler(T)
     ll_sch_std = LogLinearScheduler(T,sigma_min = 1e-5, sigma_max = 1) #Parameter value from diffdock rot_sigma_min/max
     ll_sch_tr = LogLinearScheduler(T,sigma_min = 0.1, sigma_max = 3) #Parameter value ~ box radius
@@ -862,12 +863,14 @@ if __name__ == "__main__":
         return np.mean(np.linalg.norm(x - x_,axis = -1))
 
     ts_rev = get_reverse_ts(c_ts,T = reverse_T,old_T = T)
+    if test_nan:
+        x_compose[0,0,:] = np.nan
     x_rev = x_compose
     for t in ts_rev:
         dist_compose.append(average_distances(x_0,x_rev))
         x_rev = composed.reverse_dt(x_rev,
                                     t,
-                                    [c_score[:,0,:],c_score[:,1:-1,:],c_score[:,-1,:]],
+                                    [c_score[:,0,:],c_score[:,1,:],c_score[:,2:,:]],
                                     stochastic = reverse_with_stochastic)
         #here rotation score is already negative, so we need to negative it back.
     dist_compose.append(average_distances(x_0,x_rev))

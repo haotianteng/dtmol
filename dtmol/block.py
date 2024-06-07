@@ -411,10 +411,11 @@ class SE3ELayer(nn.Module):
             displacement_tensor_cross = displacement_tensor_cross.sum(dim=-2) # [bsz, head, seq_len, d]
             displacement_tensor_cross = displacement_tensor_cross / (normalizer.unsqueeze(-1) + 1e-5)
         #normalize by the sqrt of number of non-zero elements
-        
-        coordinates = coordinates + displacement_tensor_plus  # [bsz, head, seq_len, d]
         if self.use_cross_product_update:
-            coordinates += torch.cross(displacement_tensor_cross,coordinates,dim = -1)
+            displacement_tensor = displacement_tensor_plus + torch.cross(displacement_tensor_cross,coordinates,dim = -1)
+        else:
+            displacement_tensor = displacement_tensor_plus
+        coordinates = coordinates + displacement_tensor  # [bsz, head, seq_len, d]
 
         if self.update_distance_matrix:
             # update the attn_mask
