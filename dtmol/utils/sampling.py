@@ -29,7 +29,6 @@ def _reverse_sampling(coord, scores, rev_sampler, padding, t, stochastic=False):
         coor = torch.tensor(coor,device=coord.device,dtype=coord.dtype)
     else:
         coor = coor.to(coord.device)
-    coor[padding] = 0
     return coor
 
 def reverse_sampling(coord, score, mole_sampler, prot_sampler, mole_padding, prot_padding, t, stochastic=False):
@@ -40,7 +39,7 @@ def reverse_sampling(coord, score, mole_sampler, prot_sampler, mole_padding, pro
     coor_prot = _reverse_sampling(coord[:,n_mole:], prot_score, prot_sampler, prot_padding, t, stochastic=stochastic)
     coor_padding = get_padding_mask(mole_padding,prot_padding)
     coor = torch.cat([coor_mole,coor_prot],dim=1)
-    coor[coor_padding] = 0
+    coor[coor_padding] = torch.nan
     dist = update_distance_matrix(coor, mole_padding=mole_padding, prot_padding=prot_padding)
     return coor, dist
         

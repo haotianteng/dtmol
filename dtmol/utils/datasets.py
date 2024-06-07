@@ -899,3 +899,76 @@ and for the prepend_and_append of <bos> and <eos> tokens""")
     print(f"Diffuse pocket coordinate shape: {diffused_pocket.shape}")
     print("""Notice the diffused score and pocket coordinates would have same shape with a length of n_atoms+2!
 We prepend and append tokens to the pocket score, as pocket atom won't have rotation and translation diffuser""")
+    
+    ### Try to visulaize the molecule using rdkit
+    import torch
+    import rdkit
+    from rdkit import Chem
+    from rdkit.Chem import Draw
+    from rdkit.Chem import AllChem
+    from rdkit.Chem import rdDetermineBonds
+    coords_orig = pocket_dataset['train'][idx]['net_input.mol_src_coord'][1:-1]
+    coords = diffuse_dataset['train'][idx]['diffused.mol_holo_coord'][1:-1]
+    tokens = diffuse_dataset['train'][idx]['net_input.mol_tokens'].numpy()[1:-1]
+    smile = pocket_dataset['train'][idx]['smi_name']
+    token_to_atom_dict = protein_dict
+    def create_molecule(coordinates, tokens, smile, token_to_atom_dict):
+        # Initialize an empty editable molecule
+        mol = Chem.RWMol()
+        template = Chem.MolFromSmiles(smile)
+        # Add atoms to molecule
+        for token in tokens:
+            atom_symbol = token_to_atom_dict[token]
+            atom = Chem.Atom(atom_symbol)
+            mol.AddAtom(atom)
+        
+        # Set coordinates
+        conf = Chem.Conformer(len(tokens))
+        for i, coord in enumerate(coordinates):
+            point = rdkit.Geometry.Point3D(coord[0].item(), coord[1].item(), coord[2].item())
+            conf.SetAtomPosition(i, point)
+        mol.AddConformer(conf)
+        # Add bonds to molecule
+        rdDetermineBonds.DetermineConnectivity(mol)
+        # Add Hydrogens
+        mol = Chem.AddHs(mol)
+        # decide bond order
+        # rdDetermineBonds.DetermineBondOrders(mol,charge=0)
+        cm = Chem.RemoveHs(mol)
+        osmi = Chem.MolToSmiles(cm)
+        print(osmi)
+        print(smile)
+        # AllChem.EmbedMolecule(mol)
+
+
+        # Infer bonds
+        mol.UpdatePropertyCache(strict=False)
+        Chem.GetSSSR(mol)  # To ensure the ring information is up-to-date
+        AllChem.SanitizeMol(mol)
+
+        # Visualize the molecule
+        return mol
+
+    mol = create_molecule(coords, tokens, smile, token_to_atom_dict)
+    #save to .mol2 file
+    test_folder = "/home/haotiant/Projects/CMU/dtmol/dtmol/test_data/visual_test"
+    writer = Chem.SDWriter(os.path.join(test_folder, f"{diffuse_dataset['train'][idx]['pocket_name']}.sdf"))
+    writer.write(mol)
+    import py3Dmol
+    from rdkit.Chem.Draw import IPythonConsole
+    IPythonConsole.ipython_3d = True
+    def draw_with_spheres(mol):
+        v = py3Dmol.view(width=300,height=300)
+        IPythonConsole.addMolToView(mol,v)
+        v.zoomTo()
+        v.setStyle({'sphere':{'radius':0.3},'stick':{'radius':0.2}})
+        v.show()
+    draw_with_spheres(mol)
+    
+    
+    os.makedirs(test_folder,exist_ok = True)
+    with open(os.path.join(test_folder,'coords.npy'), 'wb+') as f:
+        np.save(f, coords.numpy())
+    with open(os.path.join(test_folder,'tokens.npy'), 'wb+') as f:
+        np.save(f, [token_to_atom_dict[t] for t in tokens])
+    
