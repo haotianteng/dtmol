@@ -380,8 +380,8 @@ class SE3ELayer(nn.Module):
         attn_disp = attn_disp.masked_fill(inf_mask, 0)
         attn_disp = self.attn_proj(attn_disp) # [B, N, N, 2*H] or [B, N, N, H]
         attn_disp = self.norm_attn(attn_disp)
-        attn_disp = self.sigmoid(attn_disp)
-        # attn_disp = self.silu(attn_disp)
+        #attn_disp = self.sigmoid(attn_disp)
+        attn_disp = self.silu(attn_disp)
         if self.use_cross_product_update:
             attn_disp_plus = attn_disp[..., :self.attention_heads] # [B, N, N, H]
             attn_disp_cross = attn_disp[..., self.attention_heads:] # [B, N, N, H]
