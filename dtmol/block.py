@@ -876,7 +876,7 @@ class DiffusionPoolHead(nn.Module):
         self.out_dim = out_dim
         self.linear1 = nn.Linear(input_dim, hidden_dim)
         self.out_proj = nn.Linear(hidden_dim, out_dim)
-        self.x_gate = nn.Sigmoid()
+        self.x_gate = nn.SiLU()
         self.out_proj2 = nn.Linear(input_dim2, out_dim//coord_dim, bias = False)
         self.dropout = nn.Dropout(p=dropout)
         self.activation_fn = get_activation_fn(activation_fn)()
