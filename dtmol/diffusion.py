@@ -502,8 +502,11 @@ class RotationSampler(BaseSampler):
         """
         raise NotImplementedError
 
-    def score(self,eps,sampled):
-        return score_vec(eps,sampled)
+    def score(self,eps,sampled,normalize = True):
+        if normalize:
+            return score_vec(eps,sampled)/score_norm(eps)
+        else:
+            return score_vec(eps,sampled)
     
     def sample_given_t_vp(self,x:Union[torch.tensor,np.ndarray],t:Union[int,torch.Tensor,np.ndarray]):
         """

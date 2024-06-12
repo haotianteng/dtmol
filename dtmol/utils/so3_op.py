@@ -53,7 +53,7 @@ def _pre_compute():
     variance (eps) and different angles (omega). The sore function is given in the
     4.3 section in the diffDock paper https://arxiv.org/pdf/2210.01776.pdf  
     """
-    global _omegas_array, _cdf_vals, _score_norms, _exp_score_norms, _pdf_vals
+    global _omegas_array, _cdf_vals, _score_norms, _exp_score_norms, _pdf_vals, _eps_array
     if os.path.exists(os.path.join(DATA_FOLDER,'.so3_omegas_array2.npy')):
         _omegas_array = np.load(os.path.join(DATA_FOLDER,'.so3_omegas_array2.npy'))
         _pdf_vals = np.load(os.path.join(DATA_FOLDER,'.so3_pdf_vals2.npy'))
@@ -65,10 +65,10 @@ def _pre_compute():
         _eps_array = 10 ** np.linspace(np.log10(MIN_EPS), np.log10(MAX_EPS), N_EPS)
         _omegas_array = np.linspace(0, np.pi, X_N + 1)[1:]
 
-        _exp_vals = np.asarray([_expansion(_omegas_array, eps) for eps in _eps_array])
-        _pdf_vals = np.asarray([_density(_exp, _omegas_array, marginal=True) for _exp in _exp_vals])
-        _cdf_vals = np.asarray([_pdf.cumsum() / X_N * np.pi for _pdf in _pdf_vals])
-        _score_norms = np.asarray([_score(_exp_vals[i], _cdf_vals[i],_omegas_array, _eps_array[i]) for i in range(len(_eps_array))])
+        _exp_vals = np.asarray([_expansion(_omegas_array, eps) for eps in _eps_array]) #f(w) term in equation 3 in diffDock paper
+        _pdf_vals = np.asarray([_density(_exp, _omegas_array, marginal=True) for _exp in _exp_vals]) #p(w) term in equation 3 in diffDock paper
+        _cdf_vals = np.asarray([_pdf.cumsum() / X_N * np.pi for _pdf in _pdf_vals]) #normalized cdf of the pdf (pdf sum to pi)
+        _score_norms = np.asarray([_score(_exp_vals[i], _cdf_vals[i],_omegas_array, _eps_array[i]) for i in range(len(_eps_array))]) #dlog(f(w))/dw term in equation 3 in diffDock paper
 
         _exp_score_norms = np.sqrt(np.sum(_score_norms**2 * _pdf_vals, axis=1) / np.sum(_pdf_vals, axis=1) / np.pi)
         #Calculate the expectation of score norm summing over omega
@@ -161,6 +161,7 @@ if __name__ == "__main__":
     plt.legend()
     plt.xlabel("omega")
     plt.ylabel("score")
+    _eps_array = 10 ** np.linspace(np.log10(MIN_EPS), np.log10(MAX_EPS), N_EPS)
 
     sampled = []
     for _ in range(10000):
@@ -178,12 +179,21 @@ if __name__ == "__main__":
     #plot the distribution of scores
     scores_eps = []
     es = []
-    for eps in range(1,100):
+    vecs = []
+    corrs = []
+    for eps_idx in range(1,1000):
+        eps = _eps_array[eps_idx]
         es.append(eps)
-        score = score_vec(eps, sample_vec(eps))/score_norm(2)
+        vec = sample_vec(eps)
+        vecs.append(vec)
+        score = score_vec(eps, vec)/score_norm(eps)
+        corr = np.dot(vec, score)/np.linalg.norm(vec)/np.linalg.norm(score)
+        corrs.append(corr)
         scores_eps.append(np.linalg.norm(score))
     fig = plt.figure()
     plt.plot(es, scores_eps)
+    plt.xlabel("epislon")
+    plt.ylabel("score")
     
     #plot the score norm 
     score_norms = []
