@@ -197,11 +197,6 @@ class Decoder(nn.Module):
             dropout = pool_dropout
         )
 
-    def diffusion_loss(self, output, scores):
-        """Compute the loss for the diffusion heads."""
-        # deprecated, the diffusion loss is now defined in each diffusion head module.
-        pass
-
 if __name__ == "__main__":
     from dtmol.encoder import UniMolEncoder
     from dtmol.utils.dictionary import Dictionary
