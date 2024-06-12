@@ -193,3 +193,14 @@ if __name__ == "__main__":
         es.append(eps)
     fig = plt.figure()
     plt.plot(es, score_norms)
+
+    #plot the normalized score
+    scores_eps = []
+    es = []
+    for eps in range(1,100):
+        es.append(eps)
+        score = score_vec(eps, sample_vec(eps))/score_norm(eps)
+        scores_eps.append(np.linalg.norm(score))
+    fig = plt.figure()
+    plt.plot(es, scores_eps)
+    plt.show()

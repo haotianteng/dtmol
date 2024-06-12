@@ -218,7 +218,8 @@ class DiffusionTrainer(Trainer):
                                          mole_padding, 
                                          prot_padding, 
                                          batch['net_input']['mol_tokens'],
-                                         batch['net_input']['pocket_tokens'])
+                                         batch['net_input']['pocket_tokens'],
+                                         batch['pocket_name'])
         return mole_rmsd, mole_rmsd_ori, prot_rmsd
     
     def get_label_coord(self, batch):
@@ -229,7 +230,7 @@ class DiffusionTrainer(Trainer):
         if self.use_wandb:
             wandb.config.update(config)
 
-    def record_intermediate(self,ensembel,label,mole_padding, prot_padding, mol_token, protein_token):
+    def record_intermediate(self,ensembel,label,mole_padding, prot_padding, mol_token, protein_token,pdb_ids):
         n_mole = mole_padding.size(1)
         #save the intermediate coordinates to the model folder
         out_f = self.config.TRAIN['record_intermediate']
@@ -240,7 +241,8 @@ class DiffusionTrainer(Trainer):
         with torch.no_grad():
             for idx in range(batch_size):
                 global_idx = self.eval_i * batch_size + idx
-                curr_out = os.path.join(out_f,f"{global_idx}")
+                pdbid = pdb_ids[idx]
+                curr_out = os.path.join(out_f,f"{pdbid}")
                 os.makedirs(curr_out,exist_ok=True)
                 if global_idx >= self.config.TRAIN['valid_first_n']:
                     break
@@ -278,7 +280,8 @@ class DiffusionTrainer(Trainer):
                         wandb.log({"coord":wandb.Object3D(coord_all),
                             "reverse_diffusion_time":t,
                             "step":self.global_step,
-                            "idx":global_idx})
+                            "idx":global_idx,
+                            "pdbid":pdbid})
 
 def worker(idx,world_size,args):
     distributed = world_size > 1
