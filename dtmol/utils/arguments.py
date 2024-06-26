@@ -33,8 +33,9 @@ args = {
     'model':
     {
         'dropout':0.1,
-        'trrot_weight': 1.0, #Currently have no effect
-        'pert_weight': 1.0, #Currently have no effect
+        'rotation_weight': 1.0, #Currently have no effect
+        'translation_weight': 1.0, #Currently have no effect
+        'perturbation_weight': 1.0, #Currently have no effect
         'independent_se3_attention': True,
         'update_distance_matrix': False,
         'use_cross_product_update': False,
@@ -100,8 +101,9 @@ def parse_args():
 
     ### Model settings
     parser.add_argument("--dropout",type=float,default=0.1)
-    parser.add_argument("--trrot_weight",type=float,default=1.0)
-    parser.add_argument("--pert_weight",type=float,default=1.0)
+    parser.add_argument("--rotation_weight",type=float,default=1.0)
+    parser.add_argument("--translation_weight",type=float,default=1.0)
+    parser.add_argument("--perturbation_weight",type=float,default=1.0)
     parser.add_argument("--share_attention",action='store_false',dest='independent_se3_attention',
                         help = "Use the same attention for the coordinates and the features")
     parser.add_argument("--update_distance_matrix",action='store_true',

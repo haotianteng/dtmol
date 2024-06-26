@@ -535,6 +535,7 @@ class RotationSampler(BaseSampler):
         """
         Input:
             x: Union[torch.tensor,np.ndarray], the input coordinates of the atoms, shape (N,3).
+            t: Union[int,torch.Tensor,np.ndarray], the diffusion time for the batch.
         """
         x = try_to_tensor(x)
         t = try_to_numpy(t)

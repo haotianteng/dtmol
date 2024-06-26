@@ -21,10 +21,12 @@ class ScoreNetwork(nn.ModuleDict):
             self.load_unimol_pretrain(config['pretrain_folder'])
         decoder_config = DummyModelConfig(mode = "train",**decoder_config)
         decoder = Decoder(decoder_config, dicts['ligand_dict'])
-        decoder.register_diffusion_pool_head("tr-rotation", 6)
+        decoder.register_diffusion_pool_head("translation", 3)
+        decoder.register_diffusion_pool_head("rotation", 3)
         decoder.register_diffusion_head("perturbation", 3)
-        self.pert_weight = 1 if "pert_weight" not in config else config["pert_weight"]
-        self.trrot_weight = 1 if "trrot_weight" not in config else config["trrot_weight"]
+        self.pert_weight = 1. if "perturbation_weight" not in config else config["perturbation_weight"]
+        self.rotation_weight = 1. if "rotation_weight" not in config else config["rotation_weight"]
+        self.translation_weight = 1. if "translation_weight" not in config else config["translation_weight"]
         self['decoder'] = decoder  
 
     def build_encoder(self, pretrain_f):
@@ -105,7 +107,7 @@ class ScoreNetwork(nn.ModuleDict):
             batch['net_input']['mol_diffuse_time'] = torch.tensor([t]*n_batch,device=mol_coord.device).unsqueeze(1)
             batch['net_input']['pocket_diffuse_time'] = torch.tensor([t]*n_batch,device=pocket_coord.device).unsqueeze(1)
             score_dict, mole_padding, prot_padding = self.forward(batch, training=False)
-            score = torch.cat([score_dict['tr-rotation'].view(-1,2,3),score_dict['perturbation']],dim=1)
+            score = torch.cat([score_dict['rotation'].view(-1,1,3),score_dict['translation'].view(-1,1,3),score_dict['perturbation']],dim=1)
             coord[torch.isinf(coord)] = torch.nan #Fill the padding inf coordinates with nan to use nanmean.
             coord,distance = reverse_sampling(coord, 
                                               score, 
@@ -167,7 +169,7 @@ class ScoreNetwork(nn.ModuleDict):
                                                attn_protein = pocket_attn, 
                                                cross_distance = cross_dist,
                                                cross_edges = cross_edges,
-                                               diffusion_heads=["tr-rotation", "perturbation"])
+                                               diffusion_heads=["rotation","translation", "perturbation"])
         
         # ##% debugging code for NaN loss
         # decoder_inpt = {"mole_embd":mole_embd, 
@@ -211,17 +213,24 @@ class ScoreNetwork(nn.ModuleDict):
         pocket_norm = diffused_dict['pocket_diffuse_norm'].to(torch.float32)
         perturbation_score = torch.cat([mol_score, pocket_score], axis=1)
         perturbation_norm = torch.cat([mol_norm, pocket_norm], axis=1)
-        tr_rot = output['tr-rotation'].view(-1, 2, 3)  # [B,6] -> [B,2,3]
+        rotation = output['rotation'].view(-1, 1, 3)  # [B,3] -> [B,1,3]
+        translation = output['translation'].view(-1, 1, 3)  # [B,3] -> [B,1,3]
         pert = output['perturbation']
         if trrot_diffusion:
-            trrot_loss = self['decoder'].diffusion_heads['tr-rotation'].loss(tr_rot, 
-                                                                            mol_trrot_score, 
-                                                                            norm = mol_trrot_norm,
-                                                                            norm_weighted = True,
-                                                                            reduction = reduction)
-            losses['trrot_loss'] = (self.trrot_weight*trrot_loss)
+            rotation_loss = self['decoder'].diffusion_heads['rotation'].loss(rotation, 
+                                                                          mol_trrot_score[:,0,:], 
+                                                                          norm = mol_trrot_norm[:,0],
+                                                                          norm_weighted = True,
+                                                                          reduction = reduction)
+            translation_loss = self['decoder'].diffusion_heads['translation'].loss(translation, 
+                                                                                  mol_trrot_score[:,1,:],
+                                                                                  norm = mol_trrot_norm[:,1],
+                                                                                  norm_weighted = True,
+                                                                                  reduction = reduction)
+            losses['rotation_loss'] = self.rotation_weight*rotation_loss
+            losses['translation_loss'] = self.translation_weight*translation_loss
         if perturbation_diffusion:
-            padding_mask[:,0] = True # The first token <s> is for the tr-rotation loss
+            padding_mask[:,0] = True # The first token <s> is reserved for classification task
             pert_loss = self['decoder'].diffusion_heads['perturbation'].loss(pert, 
                                                                             perturbation_score, 
                                                                             norm = perturbation_norm, 

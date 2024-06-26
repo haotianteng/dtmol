@@ -182,11 +182,10 @@ class DiffusionTrainer(Trainer):
         with torch.no_grad():
             output, padding_mask = self.nets(batch)
             losses = self.loss(output, padding_mask, batch,norm_weighted=False, validation = True)
-            trrot_loss = losses['trrot_loss'] if self.config.TRAIN['trrot_loss'] else None #shape [batch_size, 2, 3]
+            rotation_loss = losses['rotation_loss'][:,0,:].mean() if self.config.TRAIN['trrot_loss'] else None #shape [batch_size, 2, 3]
+            translation_loss = losses['translation_loss'][:,0,:].mean() if self.config.TRAIN['trrot_loss'] else None #shape [batch_size, 2, 3]
             pert_loss = losses['perturbation_loss'] if self.config.TRAIN['perturbation_loss'] else None #shape [batch_size, N, 3]
             pert_loss = pert_loss.mean() if pert_loss is not None else None
-            rotation_loss = trrot_loss[:,0,:].mean() if trrot_loss is not None else None
-            translation_loss = trrot_loss[:,1,:].mean() if trrot_loss is not None else None
             if self.use_wandb and self._on_main_rank():
                 wandb.log({"valid_rotation_loss": rotation_loss,
                            "valid_translation_loss": translation_loss, 
@@ -389,6 +388,9 @@ def worker(idx,world_size,args):
     else:
         config.MODEL= MODEL_S
     config.MODEL['max_diffusion_time'] = dataset_config['max_diffusion_time']
+    config.MODEL['perturbation_weight'] = args['model']['perturbation_weight']
+    config.MODEL['rotation_weight'] = args['model']['rotation_weight']
+    config.MODEL['translation_weight'] = args['model']['translation_weight']
     net = ScoreNetwork(config.MODEL)
     if args['train']['fine_tune_pretrain'] and args['train']['warmup'] is None:
         for param in net['ligand_encoder'].parameters():
