@@ -962,7 +962,6 @@ class DiffusionPoolHead(nn.Module):
 
     def loss(self, output, score, norm, norm_weighted = False,reduction = "mean"):
         loss = self.mse_loss(output, score)
-        print(output.shape, score.shape, norm.shape)
         if norm_weighted:
             loss = loss / norm.unsqueeze(-1)
         if reduction == "mean":
