@@ -6,6 +6,9 @@ from dtmol.utils.time_embedding import get_timestep_embedding_func
 from dtmol.utils.layer_norm import LayerNorm
 from dtmol.utils.base import get_activation_fn
 from dtmol.utils.attention import SelfMultiheadAttention
+from e3nn import o3
+from e3nn.o3 import FullyConnectedTensorProduct
+from e3nn.nn import FullyConnectedNet, Gate
 
 
 @torch.jit.script
@@ -341,13 +344,45 @@ class DiTFinalLayer(nn.Module):
         x = self.linear(x)
         return x
 
+class GlobalConv(torch.nn.Module):
+    def __init__(self, irreps_in, irreps_sh, irreps_out,heads,inter_hidden = None) -> None:
+        super().__init__()
+
+        tp = FullyConnectedTensorProduct(
+            irreps_in1=irreps_in,
+            irreps_in2=irreps_sh,
+            irreps_out=irreps_out,
+            internal_weights=False,
+            shared_weights=False,
+        )
+        if inter_hidden is None:
+            inter_hidden = heads*2
+        self.fc = FullyConnectedNet([heads, inter_hidden, tp.weight_numel], torch.relu)
+        self.tp = tp
+        self.irreps_out = self.tp.irreps_out
+
+    def forward(self, node_features, edge_attr, atten, num_nodes_norm) -> torch.Tensor:
+        weight = self.fc(atten)
+        node_features = node_features.unsqueeze(1).expand(-1, edge_attr.size(1), -1, -1)
+        edge_features = self.tp(node_features, edge_attr, weight)
+        node_features = torch.sum(edge_features, dim=1)/num_nodes_norm
+        return node_features
+
 class SE3ELayer(nn.Module):
     """
     The SE(3)-equivariant layer.
+        Args:
+            heads: int, the number of attention heads.
+            use_cross_product_update: bool, whether to use cross product to update the coordinate.
+            update_distance_matrix: bool, whether to update the distance matrix in each layer when calculate attention matrix.
+            max_l: int, default is 3, the maximum l value for the spherical harmonics.
     """
     def __init__(self,heads:int,
                  use_cross_product_update:bool,
-                 update_distance_matrix:bool):
+                 update_distance_matrix:bool,
+                 max_l:int = 3,
+                 irreps_in = None,
+                 irreps_out = None):
         super().__init__()
         self.attention_heads = heads
         self.use_cross_product_update = use_cross_product_update
@@ -359,65 +394,68 @@ class SE3ELayer(nn.Module):
         self.sigmoid = nn.Sigmoid()
         self.silu = nn.SiLU()
         self.update_distance_matrix = update_distance_matrix
+
+        #e3nn layer
+        assert heads % 16 == 0, "The number of heads must be divisible by 16."
+        multiplier = heads // 16 
+        self.irreps_sh = o3.Irreps.spherical_harmonics(max_l) #irreductible representation of spherical harmonics
+        if irreps_in is None:
+            irreps_in = self.irreps_sh
+        self.gate = Gate(
+            f"{multiplier*2}x0e + {multiplier*2}x0o",
+            [torch.relu, torch.abs],  # scalar
+            f"{multiplier}x0e + {multiplier}x0o + {multiplier}x0e + {multiplier}x0o", 
+            [torch.relu, torch.tanh, torch.relu, torch.tanh],  # gates (scalars)
+            f"{multiplier*2}x1o + {multiplier*2}x1e",  
+        )
+        self.irrpes_inter = self.gate.irreps_in
+        if irreps_out is None:
+            irreps_out = o3.Irreps(f"{multiplier}x1o + {multiplier}x1e")
+        self.irreps_in = irreps_in
+        self.irreps_out = irreps_out
+        self.conv1 = GlobalConv(self.irreps_in, self.irreps_sh, self.irrpes_inter, heads)
+        self.conv2 = GlobalConv(self.gate.irreps_out, self.irreps_sh, self.irreps_out, heads)
+
         if update_distance_matrix:
             self.dist_update_proj = nn.Linear(heads, heads, bias=False)
 
-    def forward(self, attn_disp, attn_mask, coordinates):
+    def forward(self, attn_disp, attn_mask, coordinates, node_features = None, edge_features = None):
         """
         Args:
             attn_disp: torch.Tensor, the attention displacement tensor with shape [B, H, N, N].
             attn_mask: torch.Tensor, the attention mask tensor with shape [B*H, N, N].
-            coordinates: torch.Tensor, the coordinates tensor with shape [B, H, N, D].
+            coordinates: torch.Tensor, the coordinates tensor with shape [B, N, D].
+            node_features: torch.Tensor, the node features tensor with shape [B, N, Z].
+            edge_features: torch.Tensor, the edge features tensor with shape [B, N, N, Z].
 
         """
-        bsz,_, seq_len,d = coordinates.size()
+        bsz,seq_len,d = coordinates.size()
         if self.update_distance_matrix:
             old_distance_matrix = get_distance_matrix(coordinates.view(bsz*self.attention_heads, seq_len, d))
-        normalizer = torch.sqrt(torch.sum(~torch.isinf(attn_disp),axis = -1))
+        normalizer = torch.sqrt(torch.sum(~torch.isinf(attn_disp[:,0,:,:]),axis = -1)) # number of non-inf values in each row [B, N]
+        normalizer = normalizer.unsqueeze(-1) # [B, 1, N]
         # fill -inf with 0
         attn_disp = attn_disp.permute(0,2,3,1).contiguous() # [B, N, N, H]
         inf_mask = torch.isinf(attn_disp)
         attn_disp = attn_disp.masked_fill(inf_mask, 0)
-        attn_disp = self.attn_proj(attn_disp) # [B, N, N, 2*H] or [B, N, N, H]
-        attn_disp = self.norm_attn(attn_disp)
-        #attn_disp = self.sigmoid(attn_disp)
-        attn_disp = self.silu(attn_disp)
-        if self.use_cross_product_update:
-            attn_disp_plus = attn_disp[..., :self.attention_heads] # [B, N, N, H]
-            attn_disp_cross = attn_disp[..., self.attention_heads:] # [B, N, N, H]
-            attn_disp_plus = attn_disp_plus.masked_fill(inf_mask, 0)
-            attn_disp_cross = attn_disp_cross.masked_fill(inf_mask, 0)
-            attn_disp_plus = attn_disp_plus.permute(0,3,1,2).contiguous() # [B, H, N, N]
-            attn_disp_cross = attn_disp_cross.permute(0,3,1,2).contiguous() # [B, H, N, N]
-        else:
-            attn_disp_plus = attn_disp.permute(0,3,1,2).contiguous() # [B, H, N, N]
-            attn_disp_cross = None
         #project attn_mask with self.atten_proj
         
         
         # SE(3)-equivariant branch
-        displacement_tensor = displacement(coordinates.view(bsz*self.attention_heads, seq_len, d)).view(bsz, self.attention_heads, seq_len, seq_len, d) # [bsz, head, seq_len, seq_len, d]
-        displacement_tensor = displacement_tensor.permute(0,2,3,4,1) # [bsz, seq_len, seq_len, d, head]
-        displacement_tensor = self.disp_proj(displacement_tensor)
-        displacement_tensor = self.norm_disp(displacement_tensor)
-        displacement_tensor = displacement_tensor.permute(0,4,1,2,3) # [bsz, head, seq_len, seq_len, d]
-        displacement_tensor_plus = attn_disp_plus.unsqueeze(-1) * displacement_tensor # [bsz, head, seq_len, seq_len, d]
-        if self.use_cross_product_update:
-            displacement_tensor_cross = attn_disp_cross.unsqueeze(-1) * displacement_tensor # [bsz, head, seq_len, seq_len, d]
-        # non_zero = (displacement)
-        displacement_tensor_plus = displacement_tensor_plus.sum(dim=-2) # [bsz, head, seq_len, d]
-        displacement_tensor_plus = displacement_tensor_plus / (normalizer.unsqueeze(-1) + 1e-5) # divide by sqrt(d)
-        if self.use_cross_product_update:
-            displacement_tensor_cross = displacement_tensor_cross.sum(dim=-2) # [bsz, head, seq_len, d]
-            displacement_tensor_cross = displacement_tensor_cross / (normalizer.unsqueeze(-1) + 1e-5)
-        #normalize by the sqrt of number of non-zero elements
-        if self.use_cross_product_update:
-            displacement_tensor = displacement_tensor_plus + torch.cross(displacement_tensor_cross,coordinates,dim = -1)
-        else:
-            displacement_tensor = displacement_tensor_plus
-        coordinates = coordinates + displacement_tensor  # [bsz, head, seq_len, d]
-
+        if edge_features is None:
+            displacement_tensor = displacement(coordinates) # [bsz, seq_len, seq_len, d]
+            edge_features = o3.spherical_harmonics(l=self.irreps_sh, x=displacement_tensor, normalize=True, normalization="component") # [bsz, seq_len, seq_len, (self.max_l+1)**2]
+        if node_features is None:
+            node_features = torch.sum(edge_features, dim=1)/normalizer
+        node_features = self.conv1(node_features, edge_features, attn_disp, normalizer)
+        node_features = self.gate(node_features)
+        node_features = self.conv2(node_features, edge_features, attn_disp, normalizer)
         if self.update_distance_matrix:
+            #TODO update coordinates according to node features
+            raise NotImplementedError("Coordinates update hasn't been implmeneted yet.")
+            # Check the response of https://github.com/e3nn/e3nn/discussions/439
+            # coordinates = coordinates + displacement_tensor  # [bsz, head, seq_len, d]
+
             # update the attn_mask
             distance_matrix = get_distance_matrix(coordinates.view(bsz*self.attention_heads, seq_len, d)) # [bsz*head, seq_len, seq_len]
             delta_distance_matrix = distance_matrix - old_distance_matrix
@@ -426,7 +464,7 @@ class SE3ELayer(nn.Module):
             delta_distance_matrix = self.dist_update_proj(delta_distance_matrix)
             delta_distance_matrix = delta_distance_matrix.permute(0,3,1,2).contiguous() # [bsz, head, seq_len, seq_len]
             attn_mask = attn_mask +  delta_distance_matrix.view(-1,seq_len,seq_len)# d exp{(-Ax+b)^2} = -2(Ax+b) exp{(-Ax+b)^2} dx
-        return attn_disp,attn_mask, coordinates, displacement_tensor,
+        return attn_disp,attn_mask, coordinates, node_features, edge_features
         
 
 class TransformerEncoderWithPair(nn.Module):
@@ -565,7 +603,8 @@ class TransformerDecoderWithPair(nn.Module):
         encoder_layers: int = 6,
         embed_dim: int = 768,
         ffn_embed_dim: int = 3072,
-        attention_heads: int = 8,
+        attention_heads: int = 16,
+        divisor: int = 16,
         independent_SE3_attention: bool = True,
         update_distance_matrix: bool = True,
         use_cross_product_update: bool = True,
@@ -589,12 +628,19 @@ class TransformerDecoderWithPair(nn.Module):
         self.attention_heads = attention_heads
         self.use_cross_product_update = use_cross_product_update
         self.update_distance_matrix = update_distance_matrix
+        multiplier = attention_heads // divisor
+        irreps_out = [f"{multiplier}x1o + {multiplier}x1e"]*encoder_layers
+        irreps_out = [o3.Irreps(x) for x in irreps_out]
+        irreps_in = [None] + irreps_out[:-1]
         self.se3_equiv_layers = nn.ModuleList(
             [
             SE3ELayer(attention_heads, 
                       use_cross_product_update=use_cross_product_update,
-                      update_distance_matrix=update_distance_matrix)
-            for _ in range(encoder_layers)
+                      update_distance_matrix=update_distance_matrix,
+                      irreps_in = irreps_in[i],
+                      irreps_out = irreps_out[i],
+                      )
+            for i in range(encoder_layers)
             ]
         )
         self.emb_layer_norm = LayerNorm(self.embed_dim)
@@ -679,7 +725,7 @@ class TransformerDecoderWithPair(nn.Module):
             return attn_mask, padding_mask
         assert attn_mask is not None
         attn_mask, padding_mask = fill_attn_mask(attn_mask, padding_mask)
-        coordinates = coordinates.repeat(self.attention_heads, 1, 1).view(self.attention_heads, bsz, seq_len, d).transpose(0,1).contiguous() # [bsz, head, seq_len, d]
+        # coordinates = coordinates.repeat(self.attention_heads, 1, 1).view(self.attention_heads, bsz, seq_len, d).transpose(0,1).contiguous() # [bsz, head, seq_len, d]
         for i in range(len(self.layers)):
             x, attn_mask,attn_prob,attn_disp,attn_disp_prob = self.layers[i](
                 x,t, padding_mask=padding_mask, attn_bias=attn_mask, return_attn=True
@@ -689,8 +735,13 @@ class TransformerDecoderWithPair(nn.Module):
             # print("x shape: ", x.shape) # [bsz, seq_len, embed_dim]
             attn_disp = attn_disp.view(bsz, self.attention_heads, seq_len, seq_len).contiguous() # [bsz, head, seq_len, seq_len]
             attn_disp_prob = attn_disp_prob.view(bsz, self.attention_heads, seq_len, seq_len).contiguous() # [bsz, head, seq_len, seq_len]
-            attn_disp,attn_mask, coordinates, displacement_tensor = self.se3_equiv_layers[i](attn_disp_prob, attn_mask, coordinates)
+            if i == 0:
+                attn_disp,attn_mask, coordinates, node_features, edge_features = self.se3_equiv_layers[i](attn_disp_prob, attn_mask, coordinates)
+            else:
+                attn_disp,attn_mask, coordinates, node_features, edge_features = self.se3_equiv_layers[i](attn_disp_prob, attn_mask, coordinates, node_features, edge_features)
             
+        node_features = node_features.reshape(bsz, seq_len, -1, 3).permute(0,2,1,3).contiguous() # [bsz, head, seq_len, 3]
+
         x = self.final_layer(x, t) # [bsz, seq_len, embed_dim]
 
         def norm_loss(x, eps=1e-10, tolerance=1.0):
@@ -730,7 +781,7 @@ class TransformerDecoderWithPair(nn.Module):
         if self.final_head_layer_norm is not None:
             delta_pair_repr = self.final_head_layer_norm(delta_pair_repr)
 
-        return x, attn_mask, delta_pair_repr, x_norm, delta_pair_repr_norm, displacement_tensor
+        return x, attn_mask, delta_pair_repr, x_norm, delta_pair_repr_norm, node_features
 
 
 class MaskLMHead(nn.Module):

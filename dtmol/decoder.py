@@ -10,6 +10,7 @@ def base_architecture(args):
     args.embed_dim = getattr(args, "embed_dim", 512)
     args.ffn_embed_dim = getattr(args, "ffn_embed_dim", 2048)
     args.attention_heads = getattr(args, "attention_heads", 64)
+    args.divisor = getattr(args, "divisor", 16) # for e3nn layers (l = 3 spherical harmonics give 16 terms), attention heads should be divisible by this number
     args.emb_dropout = getattr(args, "emb_dropout", 0.1)
     args.dropout = getattr(args, "dropout", 0.1)
     args.n_gaussian_basis = getattr(args, "n_gaussian_basis", 128)
@@ -40,6 +41,7 @@ class Decoder(nn.Module):
             embed_dim=config.embed_dim,
             ffn_embed_dim=config.ffn_embed_dim,
             attention_heads=config.attention_heads,
+            divisor=config.divisor,
             emb_dropout=config.emb_dropout,
             dropout=config.dropout,
             attention_dropout=config.attention_dropout,
@@ -139,17 +141,17 @@ class Decoder(nn.Module):
             delta_decoder_pair_rep,
             x_norm,
             delta_decoder_pair_rep_norm,
-            displacement_tensor,
+            node_rep,
         ) = self.decoder(full_embd, full_coor, timesteps, padding_mask=full_padding, attn_mask=full_attn)
         decoder_pair_rep[decoder_pair_rep == float("-inf")] = 0
         if diffusion_heads is None:
-            return decoder_rep, decoder_pair_rep, delta_decoder_pair_rep, x_norm, delta_decoder_pair_rep_norm,displacement_tensor
+            return decoder_rep, decoder_pair_rep, delta_decoder_pair_rep, x_norm, delta_decoder_pair_rep_norm,node_rep
         else:
             scores = {}
             for head in diffusion_heads:
                 if head not in self.diffusion_heads:
                     raise ValueError(f"Head {head} not registered")
-                scores[head] = self.diffusion_heads[head](decoder_rep,displacement_tensor)
+                scores[head] = self.diffusion_heads[head](decoder_rep,node_rep)
             return scores, full_padding
         
     def register_diffusion_head(
@@ -168,7 +170,7 @@ class Decoder(nn.Module):
                 )
         self.diffusion_heads[name] = DiffusionHead(
             input_dim=self.config.embed_dim,
-            input_dim2 = self.config.attention_heads, #number of heads
+            input_dim2 = self.config.attention_heads//self.config.divisor*2, #dimension of output node features of SE3_layer
             hidden_dim=hidden_dim or self.config.embed_dim,
             out_dim=out_dim,
             activation_fn=self.config.head_activate_fn
@@ -190,7 +192,7 @@ class Decoder(nn.Module):
                 )
         self.diffusion_heads[name] = DiffusionPoolHead(
             input_dim=self.config.embed_dim,
-            input_dim2 = self.config.attention_heads, #number of heads
+            input_dim2 = self.config.attention_heads//self.config.divisor*2, #dimension of output node features of SE3_layer
             hidden_dim=hidden_dim or self.config.embed_dim,
             out_dim=out_dim,
             activation_fn=self.config.head_activate_fn,
