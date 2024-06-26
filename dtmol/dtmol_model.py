@@ -213,18 +213,18 @@ class ScoreNetwork(nn.ModuleDict):
         pocket_norm = diffused_dict['pocket_diffuse_norm'].to(torch.float32)
         perturbation_score = torch.cat([mol_score, pocket_score], axis=1)
         perturbation_norm = torch.cat([mol_norm, pocket_norm], axis=1)
-        rotation = output['rotation']  # [B,3]
-        translation = output['translation']  # [B,3]
+        rotation = output['rotation'].view(-1, 1, 3)  # [B,NX3] -> [B,N,3]
+        translation = output['translation'].view(-1, 1, 3)  # [B,NX3] -> [B,N,3]
         pert = output['perturbation']
         if trrot_diffusion:
             rotation_loss = self['decoder'].diffusion_heads['rotation'].loss(rotation, 
-                                                                          mol_trrot_score[:,0,:], 
-                                                                          norm = mol_trrot_norm[:,0],
+                                                                          mol_trrot_score[:,0,:].unsqueeze(1), 
+                                                                          norm = mol_trrot_norm[:,0].unsqueeze(1),
                                                                           norm_weighted = True,
                                                                           reduction = reduction)
             translation_loss = self['decoder'].diffusion_heads['translation'].loss(translation, 
-                                                                                  mol_trrot_score[:,1,:],
-                                                                                  norm = mol_trrot_norm[:,1],
+                                                                                  mol_trrot_score[:,1,:].unsqueeze(1),
+                                                                                  norm = mol_trrot_norm[:,1].unsqueeze(1),
                                                                                   norm_weighted = True,
                                                                                   reduction = reduction)
             losses['rotation_loss'] = self.rotation_weight*rotation_loss
