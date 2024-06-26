@@ -21,9 +21,9 @@ class ScoreNetwork(nn.ModuleDict):
             self.load_unimol_pretrain(config['pretrain_folder'])
         decoder_config = DummyModelConfig(mode = "train",**decoder_config)
         decoder = Decoder(decoder_config, dicts['ligand_dict'])
-        decoder.register_diffusion_pool_head("translation", 3)
-        decoder.register_diffusion_pool_head("rotation", 3)
-        decoder.register_diffusion_head("perturbation", 3)
+        decoder.register_diffusion_pool_head("translation", 3, parity = -1)
+        decoder.register_diffusion_pool_head("rotation", 3, parity = 1) #rotation vector is pseudovector
+        decoder.register_diffusion_head("perturbation", 3, parity = -1) 
         self.pert_weight = 1. if "perturbation_weight" not in config else config["perturbation_weight"]
         self.rotation_weight = 1. if "rotation_weight" not in config else config["rotation_weight"]
         self.translation_weight = 1. if "translation_weight" not in config else config["translation_weight"]
@@ -213,8 +213,8 @@ class ScoreNetwork(nn.ModuleDict):
         pocket_norm = diffused_dict['pocket_diffuse_norm'].to(torch.float32)
         perturbation_score = torch.cat([mol_score, pocket_score], axis=1)
         perturbation_norm = torch.cat([mol_norm, pocket_norm], axis=1)
-        rotation = output['rotation'].view(-1, 1, 3)  # [B,3] -> [B,1,3]
-        translation = output['translation'].view(-1, 1, 3)  # [B,3] -> [B,1,3]
+        rotation = output['rotation']  # [B,3]
+        translation = output['translation']  # [B,3]
         pert = output['perturbation']
         if trrot_diffusion:
             rotation_loss = self['decoder'].diffusion_heads['rotation'].loss(rotation, 

@@ -309,7 +309,7 @@ def worker(idx,world_size,args):
     config.TRAIN['model_folder'] = model_folder
     os.makedirs(model_folder, exist_ok=True)
     
-    ##% Buildt the model
+    ##% Build the model
     dropout = args['model']['dropout']
     independent_se3_attention = args['model']['independent_se3_attention']
     update_distance_matrix = args['model']['update_distance_matrix']

@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import numpy as np
 from typing import Optional
 from dtmol.utils.time_embedding import get_timestep_embedding_func
 from dtmol.utils.layer_norm import LayerNorm
@@ -629,9 +630,13 @@ class TransformerDecoderWithPair(nn.Module):
         self.use_cross_product_update = use_cross_product_update
         self.update_distance_matrix = update_distance_matrix
         multiplier = attention_heads // divisor
-        irreps_out = [f"{multiplier}x1o + {multiplier}x1e"]*encoder_layers
+        num_odd_vec,num_even_vec = multiplier,multiplier
+        irreps_out = [f"{num_odd_vec}x1o + {num_even_vec}x1e"]*encoder_layers
         irreps_out = [o3.Irreps(x) for x in irreps_out]
         irreps_in = [None] + irreps_out[:-1]
+        #generate parity according to last irreps_out 
+        #1o is odd vector with parity = -1 and 1e is even vector with parity = 1 (pseudo vector)
+        self.parity_out = np.array([-1]*num_odd_vec + [1]*num_even_vec)
         self.se3_equiv_layers = nn.ModuleList(
             [
             SE3ELayer(attention_heads, 
@@ -849,6 +854,7 @@ class DiffusionHead(nn.Module):
         activation_fn,
         hidden_dim=None,
         coord_dim=3,
+        parity = None,
     ):
         super().__init__()
         hidden_dim = input_dim if not hidden_dim else hidden_dim
@@ -861,6 +867,7 @@ class DiffusionHead(nn.Module):
         self.activation_fn = get_activation_fn(activation_fn)()
         self.layer_norm = LayerNorm(hidden_dim)
         self.mse_loss = nn.MSELoss(reduction="none")
+        self.parity = parity
 
     def forward(self, x, y):
         """
@@ -920,6 +927,7 @@ class DiffusionPoolHead(nn.Module):
         hidden_dim=None,
         dropout = 0.1,
         coord_dim = 3,
+        parity = None,
     ):
         super().__init__()
         hidden_dim = input_dim if not hidden_dim else hidden_dim
@@ -932,6 +940,7 @@ class DiffusionPoolHead(nn.Module):
         self.dropout = nn.Dropout(p=dropout)
         self.activation_fn = get_activation_fn(activation_fn)()
         self.mse_loss = nn.MSELoss(reduction="none")
+        self.parity = parity
 
     def forward(self, x ,y):
         """
@@ -949,10 +958,11 @@ class DiffusionPoolHead(nn.Module):
         y = y.permute(0,1,3,2) # [B, N, O/3, 3]
         y = y.reshape(bsz,n,self.out_dim) # [B, N, O]
         out = self.x_gate(x)*y # [B, N, O]
-        return out.mean(dim=1)
+        return out.mean(dim=1) # [B, O]
 
     def loss(self, output, score, norm, norm_weighted = False,reduction = "mean"):
         loss = self.mse_loss(output, score)
+        print(output.shape, score.shape, norm.shape)
         if norm_weighted:
             loss = loss / norm.unsqueeze(-1)
         if reduction == "mean":
@@ -976,6 +986,7 @@ class DiffusionClassificationHead(nn.Module):
         hidden_dim=None,
         dropout = 0.1,
         coord_dim = 3,
+        parity = None,
     ):
         super().__init__()
         hidden_dim = input_dim if not hidden_dim else hidden_dim
@@ -988,6 +999,7 @@ class DiffusionClassificationHead(nn.Module):
         self.dropout = nn.Dropout(p=dropout)
         self.activation_fn = get_activation_fn(activation_fn)()
         self.mse_loss = nn.MSELoss(reduction="none")
+        self.parity = parity
 
     def forward(self, x ,y):
         """

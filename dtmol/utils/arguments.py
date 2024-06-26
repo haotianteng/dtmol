@@ -21,7 +21,6 @@ args = {
         'norm_weighted': False, # if the perturbation loss is weighted by normalization factor
         'use_wandb': True,
         'retrain': None,
-        'dropout': 0.1,
         'warmup': None,
         'perturbation_loss': True, #If include perturbation noise
         'trrot_loss':True, #If include trrot noise

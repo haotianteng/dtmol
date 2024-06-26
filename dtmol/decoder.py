@@ -151,11 +151,16 @@ class Decoder(nn.Module):
             for head in diffusion_heads:
                 if head not in self.diffusion_heads:
                     raise ValueError(f"Head {head} not registered")
-                scores[head] = self.diffusion_heads[head](decoder_rep,node_rep)
+                if self.diffusion_heads[head].parity is not None:
+                    parity_mask = self.decoder.parity_out == self.diffusion_heads[head].parity
+                    node_rep_parity = node_rep[:,parity_mask]
+                else:
+                    node_rep_parity = node_rep
+                scores[head] = self.diffusion_heads[head](decoder_rep,node_rep_parity)
             return scores, full_padding
         
     def register_diffusion_head(
-        self, name, out_dim=None, hidden_dim=None,
+        self, name, out_dim=None, hidden_dim=None,parity = None,
     ):
         """Register a classification head."""
         if name in self.diffusion_heads:
@@ -168,35 +173,47 @@ class Decoder(nn.Module):
                         name, out_dim, prev_out_dim, hidden_dim, prev_inner_dim
                     )
                 )
+        if parity is None:
+            se3_dim = len(self.decoder.parity_out)
+        else:
+            #If partiy is specified, only output with same parity is used.
+            se3_dim = sum(self.decoder.parity_out == parity)
         self.diffusion_heads[name] = DiffusionHead(
             input_dim=self.config.embed_dim,
-            input_dim2 = self.config.attention_heads//self.config.divisor*2, #dimension of output node features of SE3_layer
-            hidden_dim=hidden_dim or self.config.embed_dim,
-            out_dim=out_dim,
-            activation_fn=self.config.head_activate_fn
-        )
-
-    def register_diffusion_pool_head(
-        self, name, out_dim=None, hidden_dim=None,pool_dropout = 0.1,
-    ):
-        """Register a classification head."""
-        if name in self.diffusion_heads:
-            prev_out_dim = self.diffusion_heads[name].out_proj.out_features
-            prev_inner_dim = self.diffusion_heads[name].dense.out_features
-            if out_dim != prev_out_dim or hidden_dim != prev_inner_dim:
-                logger.warning(
-                    're-registering head "{}" with output dimesnion {} (prev: {}) '
-                    "and inner_dim {} (prev: {})".format(
-                        name, out_dim, prev_out_dim, hidden_dim, prev_inner_dim
-                    )
-                )
-        self.diffusion_heads[name] = DiffusionPoolHead(
-            input_dim=self.config.embed_dim,
-            input_dim2 = self.config.attention_heads//self.config.divisor*2, #dimension of output node features of SE3_layer
+            input_dim2 = se3_dim, #dimension of output node features of SE3_layer
             hidden_dim=hidden_dim or self.config.embed_dim,
             out_dim=out_dim,
             activation_fn=self.config.head_activate_fn,
-            dropout = pool_dropout
+            parity = parity,
+        )
+
+    def register_diffusion_pool_head(
+        self, name, out_dim=None, hidden_dim=None,pool_dropout = 0.1, parity = None
+    ):
+        """Register a classification head."""
+        if name in self.diffusion_heads:
+            prev_out_dim = self.diffusion_heads[name].out_proj.out_features
+            prev_inner_dim = self.diffusion_heads[name].dense.out_features
+            if out_dim != prev_out_dim or hidden_dim != prev_inner_dim:
+                logger.warning(
+                    're-registering head "{}" with output dimesnion {} (prev: {}) '
+                    "and inner_dim {} (prev: {})".format(
+                        name, out_dim, prev_out_dim, hidden_dim, prev_inner_dim
+                    )
+                )
+        if parity is None:
+            se3_dim = len(self.decoder.parity_out)
+        else:
+            #If partiy is specified, only output with same parity is used.
+            se3_dim = sum(self.decoder.parity_out == parity)
+        self.diffusion_heads[name] = DiffusionPoolHead(
+            input_dim=self.config.embed_dim,
+            input_dim2 = se3_dim, #dimension of output node features of SE3_layer
+            hidden_dim=hidden_dim or self.config.embed_dim,
+            out_dim=out_dim,
+            activation_fn=self.config.head_activate_fn,
+            dropout = pool_dropout,
+            parity = parity,
         )
 
 if __name__ == "__main__":
