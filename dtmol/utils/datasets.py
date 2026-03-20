@@ -822,6 +822,176 @@ class CrossDataset(DictDataset):
             )
         self.datasets[split] = nest_dataset
 
+class ForceFallbackDataset(BaseWrapperDataset):
+    """Returns zero forces when forces are None in the underlying dataset."""
+    def __init__(self, dataset, coord_dataset):
+        super().__init__(dataset)
+        self.coord_dataset = coord_dataset
+
+    @lru_cache(maxsize=16)
+    def __getitem__(self, idx):
+        item = self.dataset[idx]
+        if item is None:
+            coords = np.array(self.coord_dataset[idx])
+            return np.zeros_like(coords, dtype=np.float32)
+        return np.array(item, dtype=np.float32)
+
+
+class HasForcesDataset(BaseWrapperDataset):
+    """Returns 1.0 if forces are available, 0.0 otherwise."""
+    def __init__(self, dataset):
+        super().__init__(dataset)
+
+    @lru_cache(maxsize=16)
+    def __getitem__(self, idx):
+        item = self.dataset[idx]
+        return 1.0 if item is not None else 0.0
+
+
+class EnergyForceDataset(DictDataset):
+    """Dataset for energy/force prediction tasks (QM9, ANI-1x, MD17, etc.).
+
+    Reads unified-format LMDBs with task_type="energy_force" and produces
+    batches with atom tokens, coordinates, distances, edge types, and
+    energy/force targets.
+    """
+    def __init__(self, args, dictionary):
+        super().__init__(args)
+        self.dictionary = dictionary
+        self.args = Namespace(**args)
+        self.seed = self.args.seed
+        self.datasets = {}
+
+    def load_lmdb(self, path, split):
+        split_path = os.path.join(path, f"{split}.lmdb")
+        dataset = LMDBDataset(split_path)
+
+        def PrependAndAppend(dataset, pre_token, app_token):
+            dataset = PrependTokenDataset(dataset, pre_token)
+            return AppendTokenDataset(dataset, app_token)
+
+        # Atom tokens
+        src_dataset = KeyDataset(dataset, "atoms")
+        src_dataset = TokenizeDataset(
+            src_dataset, self.dictionary, max_seq_len=self.args.max_seq_len
+        )
+        src_dataset = PrependAndAppend(
+            src_dataset, self.dictionary.bos, self.dictionary.eos
+        )
+        edge_type = EdgeTypeDataset(src_dataset, len(self.dictionary))
+
+        # Coordinates
+        coord_dataset = KeyDataset(dataset, "coordinates")
+        coord_dataset = FromNumpyDataset(coord_dataset)
+        distance_dataset = DistanceDataset(coord_dataset)
+        displacement_dataset = DisplacementDataset(coord_dataset)
+        coord_dataset_padded = PrependAndAppend(coord_dataset, 0.0, 0.0)
+        distance_dataset = PrependAndAppend2DDataset(distance_dataset, 0.0)
+        displacement_dataset = PrependAndAppend3DDataset(displacement_dataset, 0.0)
+
+        # Energy target (scalar per molecule)
+        energy_dataset = KeyDataset(dataset, "energy")
+        energy_dataset = FromNumpyDataset(energy_dataset)
+
+        # Force target (per-atom 3D vectors, may be None for some datasets)
+        raw_forces_dataset = KeyDataset(dataset, "forces")
+        raw_coord_dataset = KeyDataset(dataset, "coordinates")
+        has_forces_dataset = HasForcesDataset(raw_forces_dataset)
+        forces_dataset = ForceFallbackDataset(raw_forces_dataset, raw_coord_dataset)
+        forces_dataset = FromNumpyDataset(forces_dataset)
+        forces_dataset = PrependAndAppend(forces_dataset, 0.0, 0.0)
+
+        nest_dataset = NestedDictionaryDataset(
+            {
+                "net_input": {
+                    "src_tokens": RightPadDataset(
+                        src_dataset,
+                        pad_idx=self.dictionary.pad,
+                    ),
+                    "src_coord": RightPadDatasetCoord(
+                        coord_dataset_padded,
+                        pad_idx=0,
+                    ),
+                    "src_distance": RightPadDataset2D(
+                        distance_dataset,
+                        pad_idx=0,
+                    ),
+                    "src_displacement": RightPadDataset3D(
+                        displacement_dataset,
+                        pad_idx=0,
+                    ),
+                    "src_edge_type": RightPadDataset2D(
+                        edge_type,
+                        pad_idx=0,
+                    ),
+                },
+                "target": {
+                    "energy": energy_dataset,
+                    "forces": RightPadDatasetCoord(
+                        forces_dataset,
+                        pad_idx=0,
+                    ),
+                    "has_forces": RawArrayDataset(has_forces_dataset),
+                },
+            },
+        )
+
+        if split.startswith("train"):
+            nest_dataset = EpochShuffleDataset(
+                nest_dataset, len(nest_dataset), self.seed
+            )
+        self.datasets[split] = nest_dataset
+
+
+class UnifiedDataset(DictDataset):
+    """Dispatcher that auto-detects task_type from LMDB and delegates to the
+    appropriate dataset class (CrossDataset or EnergyForceDataset).
+    """
+    def __init__(self, args, dictionary, pocket_dictionary=None,
+                 mole_diffusion_sampler=None,
+                 protein_diffusion_sampler=None,
+                 atom_diffusion_sampler=None):
+        super().__init__(args)
+        self.args_dict = args
+        self.dictionary = dictionary
+        self.pocket_dictionary = pocket_dictionary
+        self.mole_diffusion_sampler = mole_diffusion_sampler
+        self.protein_diffusion_sampler = protein_diffusion_sampler
+        self.atom_diffusion_sampler = atom_diffusion_sampler
+        self.datasets = {}
+        self._task_type = None
+
+    def load_lmdb(self, path, split):
+        split_path = os.path.join(path, f"{split}.lmdb")
+        tmp = LMDBDataset(split_path)
+        task_type = tmp[0].get("task_type", "docking")  # backward compat
+        self._task_type = task_type
+
+        if task_type == "docking":
+            if self.pocket_dictionary is None:
+                raise ValueError("pocket_dictionary is required for docking datasets")
+            delegate = CrossDataset(
+                self.args_dict,
+                self.dictionary,
+                self.pocket_dictionary,
+                mole_diffusion_sampler=self.mole_diffusion_sampler,
+                protein_diffusion_sampler=self.protein_diffusion_sampler,
+                atom_diffusion_sampler=self.atom_diffusion_sampler,
+            )
+            delegate.load_lmdb(path, split)
+            self.datasets[split] = delegate.datasets[split]
+        elif task_type == "energy_force":
+            delegate = EnergyForceDataset(self.args_dict, self.dictionary)
+            delegate.load_lmdb(path, split)
+            self.datasets[split] = delegate.datasets[split]
+        else:
+            raise ValueError(f"Unknown task_type: {task_type}")
+
+    @property
+    def task_type(self):
+        return self._task_type
+
+
 if __name__ == "__main__":
     from dtmol.utils.dictionary import Dictionary
     from dtmol.dtmol_init import PRETRAIN_FOLDER

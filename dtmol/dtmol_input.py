@@ -3,7 +3,7 @@ from torch.utils import data
 import dtmol
 import numpy as np
 from dtmol.utils.dictionary import Dictionary
-from dtmol.utils.datasets import CrossDataset
+from dtmol.utils.datasets import CrossDataset, EnergyForceDataset, UnifiedDataset
 from dtmol.utils.dictionary import Dictionary
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
@@ -52,6 +52,62 @@ def load_unimol_binding_data(config,
     for s in split:
         binding_dataset.load_lmdb(data_f,s)
     return binding_dataset
+
+def load_energy_force_data(config, data_f, split=['train', 'valid', 'test']):
+    """Load energy/force dataset (QM9, ANI-1x, MD17, etc.) from unified LMDB.
+
+    Args:
+        config: dict with keys: seed, max_seq_len.
+        data_f: str, path to directory containing {split}.lmdb files.
+        split: list of str, splits to load.
+
+    Returns:
+        EnergyForceDataset with loaded splits.
+    """
+    PRETRAIN_FOLDER = f"{dtmol.__path__[0]}/pretrain_models"
+    ligand_dict = Dictionary.load(f"{PRETRAIN_FOLDER}/unimol_molecule_dict.txt")
+    dataset = EnergyForceDataset(config, ligand_dict)
+    for s in split:
+        dataset.load_lmdb(data_f, s)
+    return dataset
+
+
+def load_unified_data(config, data_f, split=['train', 'valid', 'test']):
+    """Load any unified-format LMDB, auto-detecting task type.
+
+    Peeks at the first record to determine task_type, then delegates to
+    the appropriate loader (docking or energy/force).
+
+    Args:
+        config: dict, training configuration.
+        data_f: str, path to directory containing {split}.lmdb files.
+        split: list of str, splits to load.
+
+    Returns:
+        DictDataset (either CrossDataset or EnergyForceDataset).
+    """
+    import pickle
+    import lmdb
+
+    # Peek at the first record to determine task type
+    first_split_path = f"{data_f}/{split[0]}.lmdb"
+    env = lmdb.open(first_split_path, subdir=False, readonly=True, lock=False,
+                    readahead=False, meminit=False)
+    with env.begin() as txn:
+        cursor = txn.cursor()
+        cursor.first()
+        first_record = pickle.loads(cursor.value())
+    env.close()
+
+    task_type = first_record.get("task_type", "docking")
+
+    if task_type == "docking":
+        return load_unimol_binding_data(config, data_f, split)
+    elif task_type == "energy_force":
+        return load_energy_force_data(config, data_f, split)
+    else:
+        raise ValueError(f"Unknown task_type in LMDB: {task_type}")
+
 
 def process_coordinate(coords):
     return coords[~torch.isinf(coords).any(dim = -1)].cpu().numpy()

@@ -121,7 +121,9 @@ def process(pdbbind_dir):
         if ligand_df is None:
             continue
         pocket_atoms = extract_pocket(pdb_f, ligand_df[['x_coord', 'y_coord', 'z_coord']].values)
-        current = {"atoms":list(ligand_df['atom_name']), 
+        current = {"task_type": "docking",
+                   "dataset": "pdbbind",
+                   "atoms":list(ligand_df['atom_name']),
                    "coordinates":ligand_df[['x_coord', 'y_coord', 'z_coord']].values,
                    "smi":smiles,
                    "pocket_atoms":list(pocket_atoms['atom_name']),
