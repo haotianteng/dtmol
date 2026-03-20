@@ -22,11 +22,11 @@ class ScoreNetwork(nn.ModuleDict):
         decoder_config = DummyModelConfig(mode = "train",**decoder_config)
         decoder = Decoder(decoder_config, dicts['ligand_dict'])
         decoder.register_diffusion_pool_head("translation", 3, parity = -1)
-        decoder.register_diffusion_pool_head("rotation", 3, parity = 1) #rotation vector is pseudovector
+        decoder.register_diffusion_pool_head("rotation", 3, parity = 1) #rotation vector is pseudovector (reversed when mirror), so parity is 1.
         decoder.register_diffusion_head("perturbation", 3, parity = -1) 
-        self.pert_weight = 1. if "perturbation_weight" not in config else config["perturbation_weight"]
-        self.rotation_weight = 1. if "rotation_weight" not in config else config["rotation_weight"]
-        self.translation_weight = 1. if "translation_weight" not in config else config["translation_weight"]
+        self.pert_weight = config.get("perturbation_weight", 1.0)
+        self.rotation_weight = config.get("rotation_weight", 1.0)
+        self.translation_weight = config.get("translation_weight", 1.0)
         self['decoder'] = decoder  
 
     def build_encoder(self, pretrain_f):

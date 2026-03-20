@@ -299,24 +299,23 @@ class DiTLayer(nn.Module):
             attn_bias: torch.Tensor, the attention bias tensor with shape [B, N, N].
         """
         shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.adaLN_modulation(t).chunk(6, dim=1)
-        x = modulate(self.norm1(x), shift_msa, scale_msa)
-        x = self.self_attn(
-            query=x,
+        attn_out = self.self_attn(
+            query=modulate(self.norm1(x), shift_msa, scale_msa),
             key_padding_mask=padding_mask,
             attn_bias=attn_bias,
             return_attn=return_attn,
         )
         if return_attn:
-            x, attn_weights, attn_probs = x
+            attn_out, attn_weights, attn_probs = attn_out
             if self.indp_attn:
-                _,attn_weights_disp,attn_prob_disp = self.disp_attn(query=x,
+                _,attn_weights_disp,attn_prob_disp = self.disp_attn(query=attn_out,
                                                        key_padding_mask=padding_mask,
                                                        attn_bias=attn_bias,
                                                        return_attn=True)
             else:
                 attn_weights_disp = attn_weights
                 attn_prob_disp = attn_probs
-        x = x + gate_msa.unsqueeze(1) * x
+        x = x + gate_msa.unsqueeze(1) * attn_out
         x = x + gate_mlp.unsqueeze(1) * self.mlp(modulate(self.norm2(x), shift_mlp, scale_mlp))
     
         if not return_attn:
