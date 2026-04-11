@@ -278,6 +278,9 @@ class UnifiedDataset(Dataset):  # type: ignore[type-arg]
             prot_pos = np.zeros((0, 3), dtype=positions.dtype)
             has_protein = False
 
+        # Track whether this sample has no real protein (for cross-attention masking)
+        single_molecule = not has_protein
+
         # ----- Truncate -----
         max_mol = self.config.max_seq_len
         max_pkt = self.config.max_pocket_atoms
@@ -300,13 +303,12 @@ class UnifiedDataset(Dataset):  # type: ignore[type-arg]
         # ----- Tokenize -----
         mol_tokens = self._z_to_ligand_tokens(lig_types)
         num_mol_dict = len(self.ligand_dict)
+        num_pkt_dict = len(self.protein_dict)
 
         if has_protein:
             pkt_tokens = self._z_to_protein_tokens(prot_types)
-            num_pkt_dict = len(self.protein_dict)
         else:
             pkt_tokens = np.array([], dtype=np.int64)
-            num_pkt_dict = len(self.protein_dict)
 
         # ----- Compute matrices BEFORE BOS/EOS -----
         # Molecule
@@ -319,11 +321,6 @@ class UnifiedDataset(Dataset):  # type: ignore[type-arg]
             pkt_displacement = _compute_displacement(prot_pos)
             cross_dist = _compute_cross_distance(lig_pos, prot_pos)
             cross_disp = _compute_cross_displacement(lig_pos, prot_pos)
-        else:
-            pkt_distance = np.zeros((0, 0), dtype=np.float32)
-            pkt_displacement = np.zeros((0, 0, 3), dtype=np.float32)
-            cross_dist = np.zeros((len(lig_pos), 0), dtype=np.float32)
-            cross_disp = np.zeros((len(lig_pos), 0, 3), dtype=np.float32)
 
         # ----- Add BOS / EOS -----
         # Tokens: prepend bos, append eos
@@ -339,9 +336,12 @@ class UnifiedDataset(Dataset):  # type: ignore[type-arg]
             pkt_edge = _edge_type_matrix(pkt_tokens_padded, num_pkt_dict)
             cross_edge = _cross_edge_type(mol_tokens_padded, pkt_tokens_padded, num_mol_dict)
         else:
-            pkt_tokens_padded = np.array([], dtype=np.int64)
-            pkt_edge = np.zeros((0, 0), dtype=np.int64)
-            cross_edge = np.zeros((len(mol_tokens_padded), 0), dtype=np.int64)
+            # Dummy protein: single padding token so dual-encoder architecture
+            # receives valid input shapes. The decoder must zero out cross-attention
+            # weights when single_molecule_mask is True (see US-014).
+            pkt_tokens_padded = np.array([1], dtype=np.int64)  # pad token
+            pkt_edge = np.zeros((1, 1), dtype=np.int64)
+            cross_edge = np.zeros((len(mol_tokens_padded), 1), dtype=np.int64)
 
         # Coordinates: prepend/append np.inf
         mol_coord = _prepend_append_coord(lig_pos, np.inf)
@@ -355,11 +355,12 @@ class UnifiedDataset(Dataset):  # type: ignore[type-arg]
             cross_dist_padded = _prepend_append_cross_2d(cross_dist, 0.0)
             cross_disp_padded = _prepend_append_cross_3d(cross_disp, 0.0)
         else:
-            pkt_coord = np.zeros((0, 3), dtype=np.float32)
-            pkt_dist_padded = np.zeros((0, 0), dtype=np.float32)
-            pkt_disp_padded = np.zeros((0, 0, 3), dtype=np.float32)
-            cross_dist_padded = np.zeros((len(mol_tokens_padded), 0), dtype=np.float32)
-            cross_disp_padded = np.zeros((len(mol_tokens_padded), 0, 3), dtype=np.float32)
+            # Dummy protein: zeros for coordinates and all distance/displacement
+            pkt_coord = np.zeros((1, 3), dtype=np.float32)
+            pkt_dist_padded = np.zeros((1, 1), dtype=np.float32)
+            pkt_disp_padded = np.zeros((1, 1, 3), dtype=np.float32)
+            cross_dist_padded = np.zeros((len(mol_tokens_padded), 1), dtype=np.float32)
+            cross_disp_padded = np.zeros((len(mol_tokens_padded), 1, 3), dtype=np.float32)
 
         # ----- Build result dict -----
         result: Dict[str, Any] = {
@@ -385,6 +386,10 @@ class UnifiedDataset(Dataset):  # type: ignore[type-arg]
             },
             "pes_tier": pes_tier,
             "holo_center_coordinates": torch.from_numpy(centroid.astype(np.float32)),
+            # True when this sample has no real protein — the decoder must zero out
+            # cross-attention weights (bias = -inf) for these samples so that
+            # protein-to-ligand and ligand-to-protein attention produces zero weights.
+            "single_molecule_mask": single_molecule,
         }
 
         return result
@@ -447,6 +452,13 @@ class UnifiedDataset(Dataset):  # type: ignore[type-arg]
             "pes_tier": [s["pes_tier"] for s in samples],
             "holo_center_coordinates": torch.stack(
                 [s["holo_center_coordinates"] for s in samples]
+            ),
+            # Per-sample boolean mask: True when sample has no real protein.
+            # The decoder must zero out cross-attention weights (set bias to
+            # -inf before softmax) for these samples so cross-attention
+            # produces zero weights. See US-014.
+            "single_molecule_mask": torch.tensor(
+                [s["single_molecule_mask"] for s in samples], dtype=torch.bool
             ),
         }
 
