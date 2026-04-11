@@ -63,19 +63,20 @@ class Decoder(nn.Module):
         self.diffusion_heads = nn.ModuleDict()
         self.mse_loss = nn.MSELoss(reduction="none")
 
-    def forward(self, 
-                embd_molecule, 
+    def forward(self,
+                embd_molecule,
                 embd_protein,
                 coor_molecule,
                 coor_protein,
                 timesteps,
                 padding_molecule,
                 padding_protein,
-                attn_mole, 
-                attn_protein, 
+                attn_mole,
+                attn_protein,
                 cross_distance,
                 cross_edges,
                 diffusion_heads = None,
+                single_molecule_mask = None,
                 ):
         """Decoder forwarding function that takes the concatenate embedding input 
         from a protein encoder and a molecule encoder, and take cross distnace matrix
@@ -93,6 +94,10 @@ class Decoder(nn.Module):
             cross_distance: (batch, n_molecule, n_protein) the distance matrix including the molecule and the protein.
             cross_edges: (batch, n_molecule, n_protein) the edge matrix including the molecule and the protein.
             diffusion_heads: name of diffusion heads to run.
+            single_molecule_mask: (batch,) bool tensor. When True for a sample, cross-attention
+                blocks (molecule-to-protein and protein-to-molecule) are set to -inf so that
+                softmax produces zero weights, effectively disabling cross-attention for
+                single-molecule inputs that have no real protein.
         """
         full_embd = torch.cat([embd_molecule, embd_protein], dim=1)
         full_coor = torch.cat([coor_molecule, coor_protein], dim=1)
@@ -130,6 +135,11 @@ class Decoder(nn.Module):
             graph_attn_bias[:, :, n_molecule:, n_molecule:] = attn_protein.permute(0, 3, 1, 2).contiguous()
             graph_attn_bias[:, :, :n_molecule, n_molecule:] = cross_attn_bias.clone()
             graph_attn_bias[:, :, n_molecule:, :n_molecule] = cross_attn_bias.permute(0, 1, 3, 2).contiguous().clone()
+            # Mask cross-attention for single-molecule samples (no real protein)
+            if single_molecule_mask is not None and single_molecule_mask.any():
+                mask_idx = single_molecule_mask.nonzero(as_tuple=True)[0]
+                graph_attn_bias[mask_idx, :, :n_molecule, n_molecule:] = float("-inf")
+                graph_attn_bias[mask_idx, :, n_molecule:, :n_molecule] = float("-inf")
             graph_attn_bias = graph_attn_bias.view(-1, n_full, n_full) # [bsz*head, n_node, n_node]
 
             

@@ -158,18 +158,21 @@ class ScoreNetwork(nn.ModuleDict):
             cross_dist, cross_edges = batch['diffused']['cross_distance'], batch['diffused']['cross_edge_type']
         else:
             cross_dist, cross_edges = batch['net_input']['cross_distance'], batch['net_input']['cross_edge_type']
-        output, padding_mask = self['decoder'](embd_molecule = mole_embd, 
+        # Pass single_molecule_mask to decoder for cross-attention masking (None for legacy batches)
+        single_molecule_mask = batch.get('single_molecule_mask', None)
+        output, padding_mask = self['decoder'](embd_molecule = mole_embd,
                                                embd_protein = pocket_embd,
                                                coor_molecule = mole_input['src_coord'],
                                                coor_protein = pocket_input['src_coord'],
-                                               timesteps = mole_time.squeeze(1), 
-                                               padding_molecule = mole_padding, 
+                                               timesteps = mole_time.squeeze(1),
+                                               padding_molecule = mole_padding,
                                                padding_protein = pocket_padding,
-                                               attn_mole = mole_attn, 
-                                               attn_protein = pocket_attn, 
+                                               attn_mole = mole_attn,
+                                               attn_protein = pocket_attn,
                                                cross_distance = cross_dist,
                                                cross_edges = cross_edges,
-                                               diffusion_heads=["rotation","translation", "perturbation"])
+                                               diffusion_heads=["rotation","translation", "perturbation"],
+                                               single_molecule_mask = single_molecule_mask)
         
         # ##% debugging code for NaN loss
         # decoder_inpt = {"mole_embd":mole_embd, 
