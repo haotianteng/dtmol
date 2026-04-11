@@ -255,30 +255,49 @@ def build_encoder(pretrain_f):
     return {"ligand_encoder": ligand_encoder, "protein_encoder": protein_encoder}, {"ligand_dict": ligand_dict, "protein_dict": protein_dict}
 
 if __name__ == "__main__":
+    import argparse
     import logging
     import time
     from dtmol.utils.dictionary import Dictionary
     from dtmol.utils.datasets import CrossDataset
+
+    # --- CLI argument parsing ---
+    parser = argparse.ArgumentParser(description="dtmol training script")
+    parser.add_argument("--dataset-mode", type=str, default="legacy",
+                        choices=["legacy", "unified"],
+                        help="Dataset mode: 'legacy' uses CrossDataset, "
+                             "'unified' uses UnifiedDataset + DatasetMixer (default: legacy)")
+    parser.add_argument("--datamix", type=str, default=None,
+                        help="Path to datamix.yaml for unified dataset mode")
+    parser.add_argument("--device", type=str, default="cpu",
+                        help="Device to train on (default: cpu)")
+    parser.add_argument("--batch-size", type=int, default=5,
+                        help="Batch size (default: 5)")
+    parser.add_argument("--epochs", type=int, default=100,
+                        help="Number of training epochs (default: 100)")
+    parser.add_argument("--lr", type=float, default=1e-5,
+                        help="Learning rate (default: 1e-5)")
+    parser.add_argument("--lambda-force", type=float, default=0.0,
+                        help="Weight for Tier A force loss (default: 0.0)")
+    parser.add_argument("--lambda-fd-force", type=float, default=0.0,
+                        help="Weight for Tier B finite-difference force loss (default: 0.0)")
+    parser.add_argument("--force-loss-fn", type=str, default="mse",
+                        choices=["mse", "smooth_l1"],
+                        help="Force loss function (default: mse)")
+    parser.add_argument("--use-wandb", action="store_true", default=False,
+                        help="Enable wandb logging")
+    args = parser.parse_args()
+
     package_path = "/home/haotiant/Projects/CMU/dtmol/"
     date = time.strftime("%Y%m%d")
     model_folder = os.path.join(package_path, f"dtmol/models/bindingpose_{date}")
-    # DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-    DEVICE = "cpu"
-    #create the model folder
+    DEVICE = args.device
     os.makedirs(model_folder, exist_ok=True)
-    
+
     ##% Load the pretrained encoder
     pretrain_f = os.path.join(package_path, "dtmol/models/pretrain")
-    nets,atom_dict = build_encoder(pretrain_f)
-    biding_ds_path = "/data/unimol_data/protein_ligand_binding_pose_prediction/"
-    test_config = {
-        "seed": 0,
-        "max_seq_len": 1000,
-        "max_pocket_atoms": 256,
-    }
-    binding_dataset = load_unimol_binding_data(test_config,biding_ds_path)
-    loader_dict = get_dataloader(binding_dataset,batch_size = 5,device = DEVICE)
-    
+    nets, atom_dict = build_encoder(pretrain_f)
+
     ##% Load the decoder
     print("Loading the decoder")
     decoder_config = DummyModelConfig("train")
@@ -286,17 +305,104 @@ if __name__ == "__main__":
     decoder.register_diffusion_pool_head("tr-rotation", 6)
     decoder.register_diffusion_head("perturbation", 3)
     nets.update({"decoder": decoder})
-    
-    ##% Build the trainer
-    config = CONFIG()
-    trainer = DiffusionTrainer(train_dataloader=loader_dict['train'],
-                               eval_dataloader=loader_dict['valid'],
-                               nets=nets,
-                               sampler = {"molecule": binding_dataset.mole_diffusion_sampler,
-                                          "protein": binding_dataset.protein_diffusion_sampler},
-                               config = config,
-                               device = DEVICE,
-                            )
+
+    ##% Build config
+    config = CONFIG(
+        lambda_force=args.lambda_force,
+        lambda_fd_force=args.lambda_fd_force,
+        force_loss_fn=args.force_loss_fn,
+        dataset_mode=args.dataset_mode,
+        use_wandb=args.use_wandb,
+    )
+
+    if args.dataset_mode == "unified":
+        # --- Unified dataset mode: UnifiedDataset + DatasetMixer ---
+        from dtmol.data.mixer import DatasetMixer, get_mixed_dataloader
+        from dtmol.data.unified_dataset import UnifiedDatasetConfig
+        from dtmol.diffusion import (
+            RotationSampler, GaussianSampler, TranslationSampler,
+            ChainSampler, DummySampler, LogLinearScheduler, CosineScheduler,
+        )
+
+        if args.datamix is None:
+            datamix_path = os.path.join(
+                os.path.dirname(__file__), "data", "datamix_default.yaml"
+            )
+            print(f"No --datamix specified, using default: {datamix_path}")
+        else:
+            datamix_path = args.datamix
+
+        # Build diffusion samplers (same as legacy mode)
+        T = 1000
+        ll_sch_tr = LogLinearScheduler(T, sigma_min=0.1, sigma_max=19.0)
+        ll_sch_rot = LogLinearScheduler(T, sigma_min=0.1, sigma_max=1.65)
+        ll_sch_pert = LogLinearScheduler(T, sigma_min=0.04, sigma_max=1.5)
+        ll_sch_pert2 = LogLinearScheduler(T, sigma_min=0.04, sigma_max=1.5)
+        rot_sampler = RotationSampler(schedular=ll_sch_rot, sde_format="ve")
+        tr_sampler = TranslationSampler(schedular=ll_sch_tr, sde_format="ve")
+        g_sampler = GaussianSampler(schedular=ll_sch_pert, sde_format="ve")
+        g_sampler2 = GaussianSampler(schedular=ll_sch_pert2, sde_format="ve")
+        molecule_sampler = ChainSampler(rot_sampler).compose(tr_sampler).compose(g_sampler)
+        protein_sampler = ChainSampler(g_sampler2)
+        protein_sampler.conjugate(molecule_sampler)
+
+        ds_config = UnifiedDatasetConfig(
+            max_seq_len=1000,
+            max_pocket_atoms=256,
+            seed=0,
+        )
+
+        mixer = DatasetMixer(
+            datamix_path=datamix_path,
+            ligand_dict=atom_dict['ligand_dict'],
+            protein_dict=atom_dict['protein_dict'],
+            config=ds_config,
+            diffusion_samplers={"molecule": molecule_sampler, "protein": protein_sampler},
+        )
+
+        train_loader = get_mixed_dataloader(
+            mixer, batch_size=args.batch_size, num_workers=0,
+        )
+
+        # For validation, re-use the same mixer (or a separate one if desired)
+        eval_loader = train_loader
+
+        trainer = DiffusionTrainer(
+            train_dataloader=train_loader,
+            eval_dataloader=eval_loader,
+            nets=nets,
+            sampler={"molecule": molecule_sampler, "protein": protein_sampler},
+            config=config,
+            device=DEVICE,
+        )
+    else:
+        # --- Legacy dataset mode: CrossDataset ---
+        biding_ds_path = "/data/unimol_data/protein_ligand_binding_pose_prediction/"
+        test_config = {
+            "seed": 0,
+            "max_seq_len": 1000,
+            "max_pocket_atoms": 256,
+        }
+        binding_dataset = load_unimol_binding_data(test_config, biding_ds_path)
+        loader_dict = get_dataloader(binding_dataset, batch_size=args.batch_size, device=DEVICE)
+
+        trainer = DiffusionTrainer(
+            train_dataloader=loader_dict['train'],
+            eval_dataloader=loader_dict['valid'],
+            nets=nets,
+            sampler={"molecule": binding_dataset.mole_diffusion_sampler,
+                     "protein": binding_dataset.protein_diffusion_sampler},
+            config=config,
+            device=DEVICE,
+        )
+
     trainer.load_unimol_pretrain(pretrain_f)
-    optimizer = torch.optim.Adam(trainer.nets['decoder'].parameters(),lr = 1e-5)
-    trainer.train(epoches=100,optimizer=optimizer,save_folder=model_folder)
+    optimizer = torch.optim.Adam(trainer.nets['decoder'].parameters(), lr=args.lr)
+    trainer.train(epoches=args.epochs, optimizer=optimizer, save_folder=model_folder)
+
+    # Example: multi-dataset training with force loss
+    # python dtmol_train_test.py --dataset-mode unified \
+    #     --datamix /path/to/datamix.yaml \
+    #     --lambda-force 0.1 --lambda-fd-force 0.05 \
+    #     --force-loss-fn mse --batch-size 8 --epochs 50 \
+    #     --device cuda --use-wandb

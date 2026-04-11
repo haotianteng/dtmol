@@ -27,7 +27,8 @@ class CONFIG(object):
                  use_wandb = True,
                  lambda_force: float = 0.0,
                  lambda_fd_force: float = 0.0,
-                 force_loss_fn: str = 'mse'):
+                 force_loss_fn: str = 'mse',
+                 dataset_mode: str = 'legacy'):
         self.TRAIN = {"project":project,
                       "group":group,
                       "experiment":experiment,
@@ -37,7 +38,8 @@ class CONFIG(object):
                       "use_wandb":use_wandb,
                       "lambda_force":lambda_force,
                       "lambda_fd_force":lambda_fd_force,
-                      "force_loss_fn":force_loss_fn}
+                      "force_loss_fn":force_loss_fn,
+                      "dataset_mode":dataset_mode}
 
 class Trainer(object):
     def __init__(self,
