@@ -28,7 +28,7 @@ def _import_converters() -> None:
     # Each converter module calls register_converter() at import time.
     # Add imports here as converters are implemented:
     from dtmol.data.converters import pdbbind  # noqa: F401
-    # from dtmol.data.converters import qm9  # noqa: F401
+    from dtmol.data.converters import qm9  # noqa: F401
     # from dtmol.data.converters import ani2x  # noqa: F401
     # from dtmol.data.converters import spice2  # noqa: F401
     # from dtmol.data.converters import misato  # noqa: F401
