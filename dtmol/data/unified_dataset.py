@@ -208,6 +208,7 @@ class UnifiedDataset(Dataset):  # type: ignore[type-arg]
         self.protein_dict = protein_dict
         self.config = config or UnifiedDatasetConfig()
         self.diffusion_samplers = diffusion_samplers
+        self._epoch = 1
 
         self._atom_mapping = _load_atom_mapping()
 
@@ -231,6 +232,10 @@ class UnifiedDataset(Dataset):  # type: ignore[type-arg]
     def __len__(self) -> int:
         return len(self._keys)
 
+    def set_epoch(self, epoch: int) -> None:
+        """Set the epoch for reproducible diffusion sampling."""
+        self._epoch = epoch
+
     def _read_record(self, idx: int) -> Dict[str, Any]:
         env = self._get_env()
         data = env.begin().get(self._keys[idx])
@@ -249,6 +254,16 @@ class UnifiedDataset(Dataset):  # type: ignore[type-arg]
 
     def __getitem__(self, idx: int) -> Dict[str, Any]:
         record = self._read_record(idx)
+
+        # MISATO frame_stride: skip records where timestep doesn't match stride
+        if (self.config.frame_stride > 1
+                and record.get('dataset_source') == 'misato'):
+            attempts = 0
+            while (record.get('timestep', 0) % self.config.frame_stride != 0
+                   and attempts < len(self)):
+                idx = (idx + 1) % len(self)
+                record = self._read_record(idx)
+                attempts += 1
 
         atom_types: np.ndarray = record["atom_types"]
         positions: np.ndarray = np.array(record["positions"], dtype=np.float64)
@@ -392,6 +407,171 @@ class UnifiedDataset(Dataset):  # type: ignore[type-arg]
             "single_molecule_mask": single_molecule,
         }
 
+        # --- Diffusion sampling ---
+        if self.diffusion_samplers is not None:
+            mol_sampler = self.diffusion_samplers.get('molecule')
+            prot_sampler = self.diffusion_samplers.get('protein')
+
+            # Reproducible seeding (matches DiffusionDataset pattern)
+            seed_val = int(hash((self.config.seed, self._epoch, idx)) % 1_000_000)
+            np_state = np.random.get_state()
+            torch_state = torch.random.get_rng_state()
+            np.random.seed(seed_val)
+            torch.manual_seed(seed_val)
+
+            try:
+                diffused: Dict[str, Any] = {}
+                diffused_mol_np = lig_pos.copy()
+                diffused_prot_np = prot_pos.copy() if has_protein else prot_pos
+
+                # --- Molecule diffusion ---
+                if mol_sampler is not None:
+                    mol_input = lig_pos.astype(np.float64)[None, ...]  # (1, M, 3)
+                    x_t, score, norm, ts = mol_sampler(mol_input)
+                    diffused_mol_np = x_t[0].float().numpy()
+
+                    score_0 = np.asarray(score[0], dtype=np.float32)
+                    norm_0 = np.asarray(norm[0], dtype=np.float32)
+
+                    # Chain score: first 2 = rot + tr (system-wise),
+                    # rest = perturbation (per-atom)
+                    trrot_score = score_0[:2]       # (2, 3)
+                    perturb_score = score_0[2:]     # (M, 3)
+                    trrot_norm = norm_0[:2]          # (2,)
+                    perturb_norm = norm_0[2:]        # (M,)
+
+                    perturb_score_pad = _prepend_append_coord(perturb_score, 0.0)
+                    perturb_norm_pad = np.concatenate(
+                        [[0.0], perturb_norm, [0.0]]
+                    ).astype(np.float32)
+
+                    d_mol_dist = _compute_distance_matrix(diffused_mol_np)
+                    d_mol_disp = _compute_displacement(diffused_mol_np)
+
+                    diffused['mol_holo_coord'] = torch.from_numpy(
+                        _prepend_append_coord(diffused_mol_np, np.inf))
+                    diffused['mol_holo_distance'] = torch.from_numpy(
+                        _prepend_append_2d(d_mol_dist, 0.0))
+                    diffused['mol_holo_displacement'] = torch.from_numpy(
+                        _prepend_append_3d(d_mol_disp, 0.0))
+                    diffused['mol_diffuse_time'] = torch.tensor(
+                        int(ts[0]) if hasattr(ts, '__getitem__') else int(ts))
+                    diffused['mol_diffuse_trrot_score'] = torch.from_numpy(
+                        trrot_score)
+                    diffused['mol_diffuse_perturb_score'] = torch.from_numpy(
+                        perturb_score_pad)
+                    diffused['mol_diffuse_trrot_norm'] = torch.from_numpy(
+                        trrot_norm)
+                    diffused['mol_diffuse_perturb_norm'] = torch.from_numpy(
+                        perturb_norm_pad)
+
+                # --- Protein diffusion ---
+                if prot_sampler is not None and has_protein:
+                    prot_input = prot_pos.astype(np.float64)[None, ...]
+                    x_t_p, score_p, norm_p, ts_p = prot_sampler(prot_input)
+                    diffused_prot_np = x_t_p[0].float().numpy()
+
+                    sc_p = np.asarray(score_p[0], dtype=np.float32)
+                    nm_p = np.asarray(norm_p[0], dtype=np.float32)
+
+                    pkt_sc_pad = _prepend_append_coord(sc_p, 0.0)
+                    pkt_nm_pad = np.concatenate(
+                        [[0.0], nm_p, [0.0]]
+                    ).astype(np.float32)
+
+                    d_pkt_dist = _compute_distance_matrix(diffused_prot_np)
+                    d_pkt_disp = _compute_displacement(diffused_prot_np)
+
+                    diffused['pocket_holo_coord'] = torch.from_numpy(
+                        _prepend_append_coord(diffused_prot_np, np.inf))
+                    diffused['pocket_distance'] = torch.from_numpy(
+                        _prepend_append_2d(d_pkt_dist, 0.0))
+                    diffused['pocket_displacement'] = torch.from_numpy(
+                        _prepend_append_3d(d_pkt_disp, 0.0))
+                    diffused['pocket_diffuse_time'] = torch.tensor(
+                        int(ts_p[0]) if hasattr(ts_p, '__getitem__')
+                        else int(ts_p))
+                    diffused['pocket_diffuse_score'] = torch.from_numpy(
+                        pkt_sc_pad)
+                    diffused['pocket_diffuse_norm'] = torch.from_numpy(
+                        pkt_nm_pad)
+                elif not has_protein:
+                    # Dummy protein diffused entries (zeros)
+                    diffused['pocket_holo_coord'] = torch.zeros(1, 3)
+                    diffused['pocket_distance'] = torch.zeros(1, 1)
+                    diffused['pocket_displacement'] = torch.zeros(1, 1, 3)
+                    diffused['pocket_diffuse_time'] = torch.tensor(0)
+                    diffused['pocket_diffuse_score'] = torch.zeros(1, 3)
+                    diffused['pocket_diffuse_norm'] = torch.zeros(1)
+
+                # --- Cross distance/displacement (between diffused coords) ---
+                if has_protein:
+                    d_cross = _compute_cross_distance(
+                        diffused_mol_np, diffused_prot_np)
+                    d_cross_disp = _compute_cross_displacement(
+                        diffused_mol_np, diffused_prot_np)
+                    cross_edge_d = _cross_edge_type(
+                        mol_tokens_padded, pkt_tokens_padded, num_mol_dict)
+                    diffused['cross_distance'] = torch.from_numpy(
+                        _prepend_append_cross_2d(d_cross, 0.0))
+                    diffused['cross_displacement'] = torch.from_numpy(
+                        _prepend_append_cross_3d(d_cross_disp, 0.0))
+                    diffused['cross_edge_type'] = torch.from_numpy(
+                        cross_edge_d)
+                else:
+                    m_len = len(mol_tokens_padded)
+                    diffused['cross_distance'] = torch.zeros(m_len, 1)
+                    diffused['cross_displacement'] = torch.zeros(
+                        m_len, 1, 3)
+                    diffused['cross_edge_type'] = torch.zeros(
+                        m_len, 1, dtype=torch.int64)
+
+                result['diffused'] = diffused
+            finally:
+                np.random.set_state(np_state)
+                torch.random.set_rng_state(torch_state)
+
+        # --- Force targets ---
+        forces_raw = record.get('forces')
+        if pes_tier in ('A', 'B') and forces_raw is not None:
+            result['force_tier'] = pes_tier
+            forces_all = np.array(forces_raw, dtype=np.float32)
+
+            if component_mask is not None and np.any(component_mask == 0):
+                f_prot_idx = np.where(component_mask == 0)[0]
+                f_lig_idx = np.where(component_mask == 1)[0]
+                if len(f_lig_idx) == 0:
+                    f_lig_idx = f_prot_idx
+                    f_prot_idx = np.array([], dtype=np.int64)
+                mol_forces = forces_all[f_lig_idx][:max_mol]
+                pkt_forces = (forces_all[f_prot_idx][:max_pkt]
+                              if len(f_prot_idx) > 0
+                              else np.zeros((0, 3), dtype=np.float32))
+            else:
+                mol_forces = forces_all[:max_mol]
+                pkt_forces = np.zeros((0, 3), dtype=np.float32)
+
+            mol_f_padded = _prepend_append_coord(mol_forces, 0.0)
+            pkt_f_padded = (_prepend_append_coord(pkt_forces, 0.0)
+                           if len(pkt_forces) > 0
+                           else np.zeros((1, 3), dtype=np.float32))
+
+            if 'diffused' in result:
+                result['diffused']['mol_real_forces'] = torch.from_numpy(
+                    mol_f_padded)
+                result['diffused']['pocket_real_forces'] = torch.from_numpy(
+                    pkt_f_padded)
+        else:
+            result['force_tier'] = 'none'
+            if 'diffused' in result:
+                # Zero placeholders so mixed-tier batches have uniform keys
+                m_len = len(mol_tokens_padded)
+                p_len = len(pkt_tokens_padded)
+                result['diffused']['mol_real_forces'] = torch.zeros(
+                    m_len, 3)
+                result['diffused']['pocket_real_forces'] = torch.zeros(
+                    p_len, 3)
+
         return result
 
     # -------------------------------------------------------------------
@@ -461,5 +641,59 @@ class UnifiedDataset(Dataset):  # type: ignore[type-arg]
                 [s["single_molecule_mask"] for s in samples], dtype=torch.bool
             ),
         }
+
+        # --- Collate diffused dict ---
+        if 'diffused' in samples[0]:
+            dd = [s['diffused'] for s in samples]
+            bd: Dict[str, torch.Tensor] = {}
+
+            # Coordinates padded with inf
+            for k in ('mol_holo_coord', 'pocket_holo_coord'):
+                if k in dd[0]:
+                    bd[k] = _pad_coord([d[k] for d in dd], float('inf'))
+
+            # (N, 3) tensors padded with 0: scores, forces
+            for k in ('mol_diffuse_trrot_score', 'mol_diffuse_perturb_score',
+                       'pocket_diffuse_score',
+                       'mol_real_forces', 'pocket_real_forces'):
+                if k in dd[0]:
+                    bd[k] = _pad_coord([d[k] for d in dd], 0.0)
+
+            # (N, N) distance matrices
+            for k in ('mol_holo_distance', 'pocket_distance'):
+                if k in dd[0]:
+                    bd[k] = _pad_2d([d[k] for d in dd], 0.0)
+
+            # (N, N, 3) displacement tensors
+            for k in ('mol_holo_displacement', 'pocket_displacement'):
+                if k in dd[0]:
+                    bd[k] = _pad_3d([d[k] for d in dd], 0.0)
+
+            # Cross (M, P) matrices
+            for k in ('cross_distance', 'cross_edge_type'):
+                if k in dd[0]:
+                    bd[k] = _pad_cross_2d([d[k] for d in dd], 0.0)
+
+            # Cross (M, P, 3) displacement
+            if 'cross_displacement' in dd[0]:
+                bd['cross_displacement'] = _pad_cross_3d(
+                    [d['cross_displacement'] for d in dd], 0.0)
+
+            # 1-D norm arrays
+            for k in ('mol_diffuse_trrot_norm', 'mol_diffuse_perturb_norm',
+                       'pocket_diffuse_norm'):
+                if k in dd[0]:
+                    bd[k] = _pad_1d([d[k] for d in dd], 0.0)
+
+            # Scalar time steps
+            for k in ('mol_diffuse_time', 'pocket_diffuse_time'):
+                if k in dd[0]:
+                    bd[k] = torch.stack([d[k] for d in dd])
+
+            batch['diffused'] = bd
+
+        # Force tier (list of strings for per-sample dispatch)
+        if 'force_tier' in samples[0]:
+            batch['force_tier'] = [s['force_tier'] for s in samples]
 
         return batch
