@@ -18,20 +18,26 @@ from dtmol.decoder import Decoder
 
 class CONFIG(object):
     def __init__(self,
-                 project = "dtmol", 
+                 project = "dtmol",
                  group = "docking",
                  experiment = "1-docking",
                  keep_record = 5,
                  device = "cuda",
                  grad_norm = None,
-                 use_wandb = True):
+                 use_wandb = True,
+                 lambda_force: float = 0.0,
+                 lambda_fd_force: float = 0.0,
+                 force_loss_fn: str = 'mse'):
         self.TRAIN = {"project":project,
                       "group":group,
                       "experiment":experiment,
                       "keep_record":keep_record,
                       "device":device,
                       "grad_norm":grad_norm,
-                      "use_wandb":use_wandb}
+                      "use_wandb":use_wandb,
+                      "lambda_force":lambda_force,
+                      "lambda_fd_force":lambda_fd_force,
+                      "force_loss_fn":force_loss_fn}
 
 class Trainer(object):
     def __init__(self,
