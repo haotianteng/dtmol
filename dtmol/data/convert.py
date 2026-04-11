@@ -32,7 +32,7 @@ def _import_converters() -> None:
     from dtmol.data.converters import ani2x  # noqa: F401
     from dtmol.data.converters import spice2  # noqa: F401
     from dtmol.data.converters import misato  # noqa: F401
-    # from dtmol.data.converters import pdb_apo  # noqa: F401
+    from dtmol.data.converters import pdb_apo  # noqa: F401
     # from dtmol.data.converters import irc  # noqa: F401
 
 
