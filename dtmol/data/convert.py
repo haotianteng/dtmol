@@ -27,14 +27,13 @@ def _import_converters() -> None:
     """Import all converter modules to trigger registration."""
     # Each converter module calls register_converter() at import time.
     # Add imports here as converters are implemented:
-    # from dtmol.data.converters import pdbbind  # noqa: F401
+    from dtmol.data.converters import pdbbind  # noqa: F401
     # from dtmol.data.converters import qm9  # noqa: F401
     # from dtmol.data.converters import ani2x  # noqa: F401
     # from dtmol.data.converters import spice2  # noqa: F401
     # from dtmol.data.converters import misato  # noqa: F401
     # from dtmol.data.converters import pdb_apo  # noqa: F401
     # from dtmol.data.converters import irc  # noqa: F401
-    pass
 
 
 def main(argv: list[str] | None = None) -> None:
