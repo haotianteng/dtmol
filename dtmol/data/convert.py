@@ -31,7 +31,7 @@ def _import_converters() -> None:
     from dtmol.data.converters import qm9  # noqa: F401
     from dtmol.data.converters import ani2x  # noqa: F401
     from dtmol.data.converters import spice2  # noqa: F401
-    # from dtmol.data.converters import misato  # noqa: F401
+    from dtmol.data.converters import misato  # noqa: F401
     # from dtmol.data.converters import pdb_apo  # noqa: F401
     # from dtmol.data.converters import irc  # noqa: F401
 
@@ -65,6 +65,25 @@ def main(argv: list[str] | None = None) -> None:
         choices=["random", "scaffold"],
         help="Split strategy for train/valid/test (default: random).",
     )
+    # MISATO-specific arguments
+    parser.add_argument(
+        "--dedup-list",
+        type=str,
+        default=None,
+        help="Path to file with PDB IDs to skip (one per line), for deduplication with PDBBind.",
+    )
+    parser.add_argument(
+        "--no-dedup",
+        action="store_true",
+        default=False,
+        help="Disable deduplication even if --dedup-list is provided.",
+    )
+    parser.add_argument(
+        "--affinity-index",
+        type=str,
+        default=None,
+        help="Path to PDBBind index file for merging binding affinities (MISATO).",
+    )
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
@@ -77,7 +96,17 @@ def main(argv: list[str] | None = None) -> None:
         sys.exit(1)
 
     converter = CONVERTER_REGISTRY[args.source]()
-    converter.convert(args.input, args.output, args.split_strategy)
+
+    # Build extra kwargs for converters that accept them (e.g. MISATO)
+    extra_kwargs: dict[str, object] = {}
+    if args.dedup_list is not None:
+        extra_kwargs["dedup_list"] = args.dedup_list
+    if args.no_dedup:
+        extra_kwargs["no_dedup"] = True
+    if args.affinity_index is not None:
+        extra_kwargs["affinity_index"] = args.affinity_index
+
+    converter.convert(args.input, args.output, args.split_strategy, **extra_kwargs)
     logger.info("Done.")
 
 
