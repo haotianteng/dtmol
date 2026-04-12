@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import logging
+import pickle
+import shutil
 from pathlib import Path
 from typing import Dict, List
 
 import h5py
+import lmdb
 import numpy as np
 
 from dtmol.data.converters.base import BaseConverter, UnifiedRecord
@@ -18,6 +21,13 @@ HARTREE_TO_EV = 27.2114
 BOHR_TO_ANGSTROM = 0.529177
 HARTREE_BOHR_TO_EV_ANGSTROM = HARTREE_TO_EV / BOHR_TO_ANGSTROM
 
+# HDF5 dataset key names in Transition1x
+_ENERGY_KEY = "wB97x_6-31G(d).energy"
+_FORCES_KEY = "wB97x_6-31G(d).forces"
+
+# Sub-groups to skip (they duplicate data from the IRC path)
+_SKIP_SUBGROUPS = {"reactant", "product", "transition_state"}
+
 
 class IRCConverter(BaseConverter):
     """Converter for Transition1x HDF5 dataset to unified format.
@@ -25,6 +35,9 @@ class IRCConverter(BaseConverter):
     Transition1x contains structures along IRC (intrinsic reaction coordinate)
     paths. Each reaction has multiple structures from reactant through
     transition state to product, with DFT energies and forces.
+
+    The HDF5 file has pre-defined train/val/test splits at the top level.
+    Each split contains formula groups, each with reaction sub-groups.
     """
 
     def convert(
@@ -35,89 +48,96 @@ class IRCConverter(BaseConverter):
     ) -> None:
         """Convert Transition1x HDF5 to unified LMDB format.
 
-        Each HDF5 group represents a reaction with multiple structures along
-        the IRC path. Creates one UnifiedRecord per structure.
-
-        Splits by reaction (not by structure) to avoid data leakage.
+        Uses the pre-defined train/val/test splits from the HDF5 file.
+        Each reaction group produces multiple UnifiedRecords (one per IRC
+        structure).
 
         Args:
             input_path: Path to the Transition1x HDF5 file.
             output_path: Directory where output unified LMDB files are written.
-            split_strategy: 'random' splits by reaction (default).
+            split_strategy: Ignored — uses HDF5-provided splits.
         """
         input_p = Path(input_path)
         if not input_p.exists():
             raise FileNotFoundError(f"Input file not found: {input_path}")
 
-        # Collect records grouped by reaction
-        reaction_records: Dict[str, List[UnifiedRecord]] = {}
-
-        with h5py.File(input_p, "r") as f:
-            # Transition1x structure: top-level groups are reactions
-            # Each reaction group has: atomic_numbers, positions, energies, forces
-            reaction_keys = self._collect_reaction_keys(f)
-            logger.info(
-                "Found %d reaction groups in %s", len(reaction_keys), input_path
-            )
-
-            for rxn_key in reaction_keys:
-                rxn_group = f[rxn_key]
-                records = self._convert_reaction(rxn_key, rxn_group)
-                if records:
-                    reaction_records[rxn_key] = records
-
-        # Split by reaction to avoid leakage
-        rxn_names = list(reaction_records.keys())
-        rng = np.random.RandomState(42)
-        rxn_indices = rng.permutation(len(rxn_names))
-        n_rxn = len(rxn_names)
-        n_train = int(0.8 * n_rxn)
-        n_valid = int(0.1 * n_rxn)
-
-        splits = {
-            "train": rxn_indices[:n_train],
-            "valid": rxn_indices[n_train : n_train + n_valid],
-            "test": rxn_indices[n_train + n_valid :],
-        }
-
         output_dir = Path(output_path)
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        total_records = sum(len(recs) for recs in reaction_records.values())
+        # Open three LMDB environments for streaming writes
+        map_size = 1 << 40  # 1 TB
+        envs: Dict[str, lmdb.Environment] = {}
+        counters: Dict[str, int] = {"train": 0, "valid": 0, "test": 0}
+        # HDF5 split name -> LMDB split name
+        split_map = {"train": "train", "val": "valid", "test": "test"}
+
+        for split in counters:
+            split_path = str(output_dir / f"{split}.lmdb")
+            if Path(split_path).exists():
+                shutil.rmtree(split_path)
+            Path(split_path).mkdir(parents=True, exist_ok=True)
+            envs[split] = lmdb.open(split_path, map_size=map_size)
+
+        with h5py.File(input_p, "r") as f:
+            for h5_split, lmdb_split in split_map.items():
+                if h5_split not in f:
+                    logger.warning("Split '%s' not found in HDF5, skipping", h5_split)
+                    continue
+
+                split_group = f[h5_split]
+                rxn_keys = self._collect_reaction_keys(split_group)
+                logger.info(
+                    "Split '%s': found %d reactions", h5_split, len(rxn_keys)
+                )
+
+                txn = envs[lmdb_split].begin(write=True)
+                commit_interval = 5000  # commit every N records
+
+                for rxn_key in rxn_keys:
+                    rxn_group = split_group[rxn_key]
+                    records = self._convert_reaction(rxn_key, rxn_group)
+
+                    for record in records:
+                        key = str(counters[lmdb_split]).encode()
+                        txn.put(key, pickle.dumps(record))
+                        counters[lmdb_split] += 1
+
+                        if counters[lmdb_split] % commit_interval == 0:
+                            txn.commit()
+                            txn = envs[lmdb_split].begin(write=True)
+
+                txn.commit()
+
+        for env in envs.values():
+            env.close()
+
+        total = sum(counters.values())
         logger.info(
-            "Converted %d total structures from %d reactions",
-            total_records,
-            n_rxn,
+            "Transition1x conversion complete: %d total records "
+            "(train=%d, valid=%d, test=%d)",
+            total,
+            counters["train"],
+            counters["valid"],
+            counters["test"],
         )
 
-        for split_name, split_rxn_indices in splits.items():
-            split_records: List[UnifiedRecord] = []
-            for ri in split_rxn_indices:
-                split_records.extend(reaction_records[rxn_names[ri]])
-            out_path = str(output_dir / f"{split_name}.lmdb")
-            self.write_lmdb(split_records, out_path)
-            logger.info(
-                "Wrote %d %s records (%d reactions) to %s",
-                len(split_records),
-                split_name,
-                len(split_rxn_indices),
-                out_path,
-            )
+    def _collect_reaction_keys(self, group: h5py.Group) -> List[str]:
+        """Collect all reaction group paths within a split group.
 
-    def _collect_reaction_keys(self, f: h5py.File) -> List[str]:
-        """Recursively collect all leaf group keys that contain reaction data.
-
-        Transition1x HDF5 may have nested groups (e.g. data/<rxn_type>/<rxn_id>).
-        We look for groups containing 'atomic_numbers' and 'positions' datasets.
+        Structure: <formula>/<rxn_id>/ — iterates two levels manually
+        since visititems may not work on all HDF5 files.
         """
         keys: List[str] = []
-
-        def _visit(name: str, obj: h5py.HLObject) -> None:
-            if isinstance(obj, h5py.Group):
-                if "atomic_numbers" in obj and "positions" in obj:
-                    keys.append(name)
-
-        f.visititems(_visit)  # type: ignore[arg-type]
+        for formula_name in group:
+            formula_group = group[formula_name]
+            if not isinstance(formula_group, h5py.Group):
+                continue
+            for rxn_name in formula_group:
+                if rxn_name in _SKIP_SUBGROUPS:
+                    continue
+                rxn_group = formula_group[rxn_name]
+                if isinstance(rxn_group, h5py.Group) and "atomic_numbers" in rxn_group:
+                    keys.append(f"{formula_name}/{rxn_name}")
         return keys
 
     def _convert_reaction(
@@ -126,44 +146,28 @@ class IRCConverter(BaseConverter):
         rxn_group: h5py.Group,
     ) -> List[UnifiedRecord]:
         """Convert a single reaction group into a list of UnifiedRecords."""
-        atomic_numbers = rxn_group["atomic_numbers"][()]  # (N,) or (M, N)
+        atomic_numbers = rxn_group["atomic_numbers"][()]  # (N,)
         positions = rxn_group["positions"][()]  # (M, N, 3)
-        energies = rxn_group["energies"][()]  # (M,)
 
-        # Forces: may be stored as 'forces' or 'gradients' (negate if gradients)
-        if "forces" in rxn_group:
-            raw_forces = rxn_group["forces"][()]  # (M, N, 3)
-            negate_forces = False
-        elif "gradients" in rxn_group:
-            raw_forces = rxn_group["gradients"][()]  # (M, N, 3)
-            negate_forces = True
-        else:
-            raw_forces = None
-            negate_forces = False
+        # Energy in Hartree -> eV
+        energies = rxn_group[_ENERGY_KEY][()]  # (M,)
+        energies_ev = np.array(energies, dtype=np.float64) * HARTREE_TO_EV
 
-        # Handle atomic_numbers: may be (N,) shared across structures or (M, N)
+        # Forces in Hartree/Bohr -> eV/Angstrom (these are forces, not gradients)
+        raw_forces = None
+        if _FORCES_KEY in rxn_group:
+            raw_forces = rxn_group[_FORCES_KEY][()]  # (M, N, 3)
+
+        # Handle atomic_numbers: (N,) shared across structures or (M, N)
         if atomic_numbers.ndim == 1:
             atom_types = np.array(atomic_numbers, dtype=np.int64)
         else:
-            # (M, N) — take first row, assume all structures share same species
             atom_types = np.array(atomic_numbers[0], dtype=np.int64)
-
-        # Decode bytes if needed
-        if atom_types.dtype.kind in ("S", "U", "O"):
-            # Stored as element symbols rather than atomic numbers
-            from dtmol.data.converters.ani2x import _SYMBOL_TO_Z
-
-            decoded = []
-            for s in atom_types:
-                sym = s.decode("utf-8") if isinstance(s, bytes) else str(s)
-                decoded.append(_SYMBOL_TO_Z.get(sym, 0))
-            atom_types = np.array(decoded, dtype=np.int64)
 
         num_atoms = len(atom_types)
         n_structures = positions.shape[0]
 
-        # Compute relative_energy = energy - min(energies) for the reaction path
-        energies_ev = np.array(energies, dtype=np.float64) * HARTREE_TO_EV
+        # Relative energy: 0 for lowest-energy structure in this reaction
         min_energy = float(np.min(energies_ev))
 
         records: List[UnifiedRecord] = []
@@ -172,13 +176,12 @@ class IRCConverter(BaseConverter):
             energy_ev = float(energies_ev[struct_idx])
             rel_energy = energy_ev - min_energy
 
-            # Convert forces
             forces_ev_a = None
             if raw_forces is not None:
-                f_raw = np.array(raw_forces[struct_idx], dtype=np.float64)
-                if negate_forces:
-                    f_raw = -f_raw
-                forces_ev_a = f_raw * HARTREE_BOHR_TO_EV_ANGSTROM
+                forces_ev_a = (
+                    np.array(raw_forces[struct_idx], dtype=np.float64)
+                    * HARTREE_BOHR_TO_EV_ANGSTROM
+                )
 
             neighbor_list = self.compute_neighbor_list(pos, cutoff=5.0)
 
