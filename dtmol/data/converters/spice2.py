@@ -1,29 +1,37 @@
-"""SPICE v2 converter: converts SPICE v2 HDF5 to unified LMDB format."""
+"""SPICE v2 converter: converts SPICE v2 HDF5 to unified LMDB format.
+
+SPICE v1.1.4 units (per OpenMM SPICE documentation):
+  - conformations: Angstrom
+  - dft_total_energy: Hartree
+  - dft_total_gradient: Hartree/Angstrom
+  - mbis_charges: shape (M, N, 1), elementary charge units
+"""
 
 from __future__ import annotations
 
 import logging
+import pickle
+import shutil
 from pathlib import Path
 from typing import Dict, List, Optional
 
 import h5py
+import lmdb
 import numpy as np
 
 from dtmol.data.converters.base import BaseConverter, UnifiedRecord
 
 logger = logging.getLogger(__name__)
 
-# Unit conversions
-# SPICE v2 energies are in kJ/mol, forces (gradients) in kJ/mol/nm
-KJ_MOL_TO_EV = 1.0 / 96.485  # 1 eV = 96.485 kJ/mol
-KJ_MOL_NM_TO_EV_ANGSTROM = KJ_MOL_TO_EV / 10.0  # 1 nm = 10 A
+# Unit conversions: SPICE stores energy in Hartree, gradients in Hartree/Angstrom
+HARTREE_TO_EV = 27.2114
 
 
 def _detect_dimer_components(
     atomic_numbers: np.ndarray,
     positions: np.ndarray,
 ) -> Optional[np.ndarray]:
-    """Try to detect dimer components via connectivity (distance-based).
+    """Detect dimer components via Union-Find on 1.8A covalent cutoff.
 
     Returns component_mask (0 for first component, 1 for second) if the
     system has exactly two disconnected components, otherwise None.
@@ -32,7 +40,6 @@ def _detect_dimer_components(
     if n < 2:
         return None
 
-    # Build adjacency via covalent-like cutoff (1.8 A)
     from scipy.spatial import KDTree
 
     tree = KDTree(positions)
@@ -70,7 +77,19 @@ def _detect_dimer_components(
 
 
 class SPICE2Converter(BaseConverter):
-    """Converter for SPICE v2 HDF5 dataset to unified format."""
+    """Converter for SPICE v2 HDF5 dataset to unified format.
+
+    SPICE v1.1.4 HDF5 groups represent molecules/dimers with multiple conformations.
+    Each group has:
+      - atomic_numbers: (N,) int16
+      - conformations: (M, N, 3) float32 in Angstrom
+      - dft_total_energy: (M,) float64 in Hartree
+      - dft_total_gradient: (M, N, 3) float32 in Hartree/Angstrom
+      - mbis_charges: (M, N, 1) float32 (optional)
+
+    Splits are by molecule (not conformation) to avoid data leakage.
+    Uses streaming writes to handle the large dataset (~1M records).
+    """
 
     def convert(
         self,
@@ -78,85 +97,100 @@ class SPICE2Converter(BaseConverter):
         output_path: str,
         split_strategy: str = "random",
     ) -> None:
-        """Convert SPICE v2 HDF5 to unified LMDB format.
-
-        Each HDF5 group represents a molecule/dimer with multiple conformations.
-        Creates one UnifiedRecord per conformation.
-
-        Splits by molecule (not conformation) to avoid data leakage.
-
-        Args:
-            input_path: Path to the SPICE v2 HDF5 file.
-            output_path: Directory where output unified LMDB files are written.
-            split_strategy: 'random' splits by molecule (default).
-        """
         input_p = Path(input_path)
         if not input_p.exists():
             raise FileNotFoundError(f"Input file not found: {input_path}")
 
-        mol_records: Dict[str, List[UnifiedRecord]] = {}
+        output_dir = Path(output_path)
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        # Open three LMDB environments for streaming writes
+        map_size = 1 << 40  # 1 TB
+        envs: Dict[str, lmdb.Environment] = {}
+        counters: Dict[str, int] = {"train": 0, "valid": 0, "test": 0}
+        for split in counters:
+            split_path = str(output_dir / f"{split}.lmdb")
+            if Path(split_path).exists():
+                shutil.rmtree(split_path)
+            Path(split_path).mkdir(parents=True, exist_ok=True)
+            envs[split] = lmdb.open(split_path, map_size=map_size)
+
+        rng = np.random.RandomState(42)
 
         with h5py.File(input_p, "r") as f:
-            mol_groups = list(f.keys())
-            logger.info("Found %d molecule groups in %s", len(mol_groups), input_path)
+            mol_groups = sorted(f.keys())
+            n_mols = len(mol_groups)
+            logger.info("Found %d molecule groups in %s", n_mols, input_path)
 
-            for mol_name in mol_groups:
+            # Assign molecule-level splits: 80/10/10
+            mol_perm = rng.permutation(n_mols)
+            n_train = int(0.8 * n_mols)
+            n_valid = int(0.1 * n_mols)
+
+            mol_split: Dict[int, str] = {}
+            for mi in mol_perm[:n_train]:
+                mol_split[mi] = "train"
+            for mi in mol_perm[n_train:n_train + n_valid]:
+                mol_split[mi] = "valid"
+            for mi in mol_perm[n_train + n_valid:]:
+                mol_split[mi] = "test"
+
+            logger.info(
+                "Molecule splits: %d train, %d valid, %d test",
+                n_train, n_valid, n_mols - n_train - n_valid,
+            )
+
+            for mol_idx, mol_name in enumerate(mol_groups):
                 mol_group = f[mol_name]
 
-                # Atomic numbers: (N,)
                 if "atomic_numbers" not in mol_group:
                     logger.warning("Skipping %s: no atomic_numbers", mol_name)
                     continue
-                atomic_numbers = mol_group["atomic_numbers"][()]
-                atom_types = np.array(atomic_numbers, dtype=np.int64)
-                num_atoms = len(atom_types)
-
-                # Conformations: (M, N, 3) in Angstrom (SPICE v2 stores in Angstrom)
                 if "conformations" not in mol_group:
                     logger.warning("Skipping %s: no conformations", mol_name)
                     continue
-                conformations = mol_group["conformations"][()]  # (M, N, 3)
-
-                # Energies: (M,) in kJ/mol
                 if "dft_total_energy" not in mol_group:
                     logger.warning("Skipping %s: no dft_total_energy", mol_name)
                     continue
-                energies_kj = mol_group["dft_total_energy"][()]
-
-                # Gradients: (M, N, 3) in kJ/mol/nm — forces = -gradient
                 if "dft_total_gradient" not in mol_group:
                     logger.warning("Skipping %s: no dft_total_gradient", mol_name)
                     continue
-                gradients = mol_group["dft_total_gradient"][()]
 
-                # Optional: MBIS partial charges (M, N)
-                mbis_charges: Optional[np.ndarray] = None
+                atom_types = np.array(mol_group["atomic_numbers"][()], dtype=np.int64)
+                num_atoms = len(atom_types)
+                conformations = mol_group["conformations"][()]  # (M, N, 3) Angstrom
+                energies_ha = mol_group["dft_total_energy"][()]  # (M,) Hartree
+                gradients = mol_group["dft_total_gradient"][()]  # (M, N, 3) Ha/A
+
+                # Optional: MBIS partial charges (M, N, 1) -> squeeze to (M, N)
+                mbis_raw: Optional[np.ndarray] = None
                 if "mbis_charges" in mol_group:
-                    mbis_charges = mol_group["mbis_charges"][()]
+                    mbis_raw = mol_group["mbis_charges"][()]  # (M, N, 1)
 
-                n_conformations = conformations.shape[0]
-                records: List[UnifiedRecord] = []
+                n_conf = conformations.shape[0]
 
-                # Detect dimer component mask from first conformation
+                # Detect dimer components from first conformation
                 component_mask = _detect_dimer_components(
                     atom_types, conformations[0]
                 )
 
-                for conf_idx in range(n_conformations):
-                    pos = np.array(conformations[conf_idx], dtype=np.float64)
-                    energy_ev = float(energies_kj[conf_idx]) * KJ_MOL_TO_EV
+                split = mol_split[mol_idx]
+                txn = envs[split].begin(write=True)
 
-                    # Forces = -gradient, convert kJ/mol/nm -> eV/A
+                for ci in range(n_conf):
+                    pos = np.array(conformations[ci], dtype=np.float64)
+                    energy_ev = float(energies_ha[ci]) * HARTREE_TO_EV
+
+                    # Forces = -gradient; gradient is Ha/A -> forces in eV/A
                     forces_ev_a = (
-                        -np.array(gradients[conf_idx], dtype=np.float64)
-                        * KJ_MOL_NM_TO_EV_ANGSTROM
+                        -np.array(gradients[ci], dtype=np.float64) * HARTREE_TO_EV
                     )
 
-                    # Partial charges for this conformation
+                    # Partial charges: squeeze (N, 1) -> (N,)
                     partial_charges: Optional[np.ndarray] = None
-                    if mbis_charges is not None:
+                    if mbis_raw is not None:
                         partial_charges = np.array(
-                            mbis_charges[conf_idx], dtype=np.float64
+                            mbis_raw[ci].squeeze(-1), dtype=np.float64
                         )
 
                     neighbor_list = self.compute_neighbor_list(pos, cutoff=5.0)
@@ -166,7 +200,7 @@ class SPICE2Converter(BaseConverter):
                         "positions": pos,
                         "num_atoms": num_atoms,
                         "dataset_source": "spice2",
-                        "system_id": f"{mol_name}_conf{conf_idx}",
+                        "system_id": f"{mol_name}_conf{ci}",
                         "pes_tier": "A",
                         "forces": forces_ev_a,
                         "noise_target": None,
@@ -186,47 +220,28 @@ class SPICE2Converter(BaseConverter):
                         "lumo": None,
                         "neighbor_list": neighbor_list,
                     }
-                    records.append(record)
 
-                mol_records[mol_name] = records
+                    key = str(counters[split]).encode()
+                    txn.put(key, pickle.dumps(record))
+                    counters[split] += 1
 
-        # Split by molecule to avoid leakage
-        mol_names = list(mol_records.keys())
-        rng = np.random.RandomState(42)
-        mol_indices = rng.permutation(len(mol_names))
-        n_mols = len(mol_names)
-        n_train = int(0.8 * n_mols)
-        n_valid = int(0.1 * n_mols)
+                txn.commit()
 
-        splits = {
-            "train": mol_indices[:n_train],
-            "valid": mol_indices[n_train : n_train + n_valid],
-            "test": mol_indices[n_train + n_valid :],
-        }
+                if (mol_idx + 1) % 1000 == 0:
+                    logger.info(
+                        "Processed %d/%d molecules (train=%d, valid=%d, test=%d)",
+                        mol_idx + 1, n_mols,
+                        counters["train"], counters["valid"], counters["test"],
+                    )
 
-        output_dir = Path(output_path)
-        output_dir.mkdir(parents=True, exist_ok=True)
+        for env in envs.values():
+            env.close()
 
-        total_records = sum(len(recs) for recs in mol_records.values())
+        total = sum(counters.values())
         logger.info(
-            "Converted %d total conformations from %d molecules",
-            total_records,
-            n_mols,
+            "Wrote %d total records — train: %d, valid: %d, test: %d",
+            total, counters["train"], counters["valid"], counters["test"],
         )
-
-        for split_name, split_mol_indices in splits.items():
-            split_records: List[UnifiedRecord] = []
-            for mi in split_mol_indices:
-                split_records.extend(mol_records[mol_names[mi]])
-            out_path = str(output_dir / f"{split_name}.lmdb")
-            self.write_lmdb(split_records, out_path)
-            logger.info(
-                "Wrote %d %s records (%d molecules) to %s",
-                len(split_records),
-                split_name,
-                len(split_mol_indices),
-                out_path,
-            )
 
 
 def register() -> None:
