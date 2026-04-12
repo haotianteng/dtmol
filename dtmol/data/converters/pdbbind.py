@@ -48,8 +48,15 @@ def _symbol_to_atomic_number(symbol: str) -> int:
 
 
 def _read_source_lmdb(lmdb_path: str) -> List[Dict[str, Any]]:
-    """Read all records from a source PDBBind LMDB file."""
-    env = lmdb.open(lmdb_path, readonly=True, lock=False, subdir=False)
+    """Read all records from a source PDBBind LMDB file.
+
+    Automatically detects whether the LMDB is a directory (subdir=True)
+    or a single file (subdir=False).
+    """
+    path = Path(lmdb_path)
+    # If path is a directory containing data.mdb, it's subdir=True style
+    is_subdir = path.is_dir() and (path / "data.mdb").exists()
+    env = lmdb.open(lmdb_path, readonly=True, lock=False, subdir=is_subdir)
     records: List[Dict[str, Any]] = []
     with env.begin() as txn:
         cursor = txn.cursor()
@@ -129,7 +136,12 @@ def _convert_record(raw: Dict[str, Any]) -> UnifiedRecord:
 
 
 class PDBBindConverter(BaseConverter):
-    """Converter for PDBBind UniMol LMDB files to unified format."""
+    """Converter for PDBBind UniMol LMDB files to unified format.
+
+    Supports two input formats:
+    1. Directory with split LMDBs: train.lmdb, valid.lmdb, test.lmdb (preserves splits)
+    2. Single LMDB directory (e.g. pdbbind.lmdb/) — auto-splits 80/10/10
+    """
 
     def convert(
         self,
@@ -137,16 +149,36 @@ class PDBBindConverter(BaseConverter):
         output_path: str,
         split_strategy: str = "random",
     ) -> None:
-        """Convert PDBBind LMDB files preserving train/valid/test splits.
+        """Convert PDBBind LMDB files to unified format.
 
         Args:
-            input_path: Directory containing train.lmdb, valid.lmdb, test.lmdb.
+            input_path: Either a directory containing train.lmdb/valid.lmdb/test.lmdb,
+                or a single LMDB directory (containing data.mdb).
             output_path: Directory where output unified LMDB files are written.
+            split_strategy: Split strategy (used for auto-splitting single LMDB).
         """
         input_dir = Path(input_path)
         output_dir = Path(output_path)
         output_dir.mkdir(parents=True, exist_ok=True)
 
+        # Detect input format
+        has_split_files = any(
+            (input_dir / f"{s}.lmdb").exists() for s in ("train", "valid", "test")
+        )
+        is_single_lmdb = (input_dir / "data.mdb").exists()
+
+        if has_split_files:
+            self._convert_split_lmdbs(input_dir, output_dir)
+        elif is_single_lmdb:
+            self._convert_single_lmdb(input_dir, output_dir)
+        else:
+            raise FileNotFoundError(
+                f"No split LMDBs (train.lmdb etc.) or single LMDB (data.mdb) "
+                f"found at {input_path}"
+            )
+
+    def _convert_split_lmdbs(self, input_dir: Path, output_dir: Path) -> None:
+        """Convert pre-split LMDB files preserving train/valid/test splits."""
         for split in ("train", "valid", "test"):
             src_path = input_dir / f"{split}.lmdb"
             if not src_path.exists():
@@ -155,19 +187,51 @@ class PDBBindConverter(BaseConverter):
 
             logger.info("Converting %s ...", src_path)
             raw_records = _read_source_lmdb(str(src_path))
-            unified_records: List[UnifiedRecord] = []
-
-            for raw in raw_records:
-                try:
-                    unified = _convert_record(raw)
-                    unified_records.append(unified)
-                except Exception:
-                    sid = raw.get("pdb_id", raw.get("pocket", "?"))
-                    logger.warning("Skipping record %s due to error", sid, exc_info=True)
+            unified_records = self._convert_records(raw_records)
 
             out_path = str(output_dir / f"{split}.lmdb")
             self.write_lmdb(unified_records, out_path)
             logger.info("Wrote %d records to %s", len(unified_records), out_path)
+
+    def _convert_single_lmdb(self, input_dir: Path, output_dir: Path) -> None:
+        """Convert a single LMDB and auto-split into train/valid/test (80/10/10)."""
+        logger.info("Converting single LMDB at %s (auto-splitting 80/10/10) ...", input_dir)
+        raw_records = _read_source_lmdb(str(input_dir))
+        unified_records = self._convert_records(raw_records)
+
+        # Deterministic shuffle for reproducible splits
+        rng = np.random.RandomState(42)
+        indices = np.arange(len(unified_records))
+        rng.shuffle(indices)
+
+        n = len(unified_records)
+        n_train = int(n * 0.8)
+        n_valid = int(n * 0.1)
+
+        split_map = {
+            "train": indices[:n_train],
+            "valid": indices[n_train:n_train + n_valid],
+            "test": indices[n_train + n_valid:],
+        }
+
+        for split_name, split_indices in split_map.items():
+            split_records = [unified_records[i] for i in split_indices]
+            out_path = str(output_dir / f"{split_name}.lmdb")
+            self.write_lmdb(split_records, out_path)
+            logger.info("Wrote %d records to %s", len(split_records), out_path)
+
+    @staticmethod
+    def _convert_records(raw_records: List[Dict[str, Any]]) -> List[UnifiedRecord]:
+        """Convert a list of raw PDBBind records to unified format."""
+        unified_records: List[UnifiedRecord] = []
+        for raw in raw_records:
+            try:
+                unified = _convert_record(raw)
+                unified_records.append(unified)
+            except Exception:
+                sid = raw.get("pdb_id", raw.get("pocket", "?"))
+                logger.warning("Skipping record %s due to error", sid, exc_info=True)
+        return unified_records
 
 
 def register() -> None:
