@@ -1,0 +1,313 @@
+## Codebase Patterns
+- UniMol dict files are at `dtmol/pretrain_models/` (NOT `dtmol/models/pretrain/`), plain text with one token per line, no counts
+- Dictionary class at `dtmol/utils/dictionary.py` uses special tokens: [PAD]=0, [CLS]=1, [SEP]=2, [UNK]=3
+- CrossDataset batch structure uses `net_input` dict with mol_* and pocket_* keys, plus `diffused` dict
+- Coordinates are padded with `np.inf`, tokens with pad index 1
+- Mypy works with `--ignore-missing-imports` flag since many deps lack stubs
+- Converter self-registration: each converter module calls `register()` at bottom, `convert.py` just imports the module
+- PDBBind pocket_atoms are full atom names (e.g. 'CA'); use `a[0]` for element symbol
+- HDF5 datasets may store strings as bytes — always check and decode if needed
+- h5py needed for HDF5-based converters (ANI-2x, SPICE2, MISATO, Transition1x)
+- SPICE v2 uses kJ/mol units (not Hartree); stores gradients not forces — negate for forces
+- Dimer detection: Union-Find on 1.8A covalent cutoff to find disconnected components
+- Converter-specific CLI args: add to convert.py argparse, pass as extra_kwargs to converter.convert()
+- MISATO component classification: protein = standard AA 3-letter codes, ligand = everything else minus water (HOH/WAT/TIP3)
+- BioPython (`biopython` package) needed for PDB/mmCIF parsing; use PDBParser(QUIET=True) / MMCIFParser(QUIET=True)
+- Transition1x HDF5 has nested groups — use h5py visititems() to find leaf groups with 'atomic_numbers' + 'positions'
+- UnifiedDataset returns batch matching CrossDataset format: `net_input` dict with mol_*/pocket_*/cross_* keys, `pes_tier`, `holo_center_coordinates`
+- Single-molecule samples get dummy protein (1 pad token, zero coords) + `single_molecule_mask=True`; decoder must mask cross-attention for these
+- Edge type formula: `token[i] * num_dict + token[j]`; cross uses mol dict size as multiplier
+- Diffusion samplers: molecule ChainSampler (rot->tr->pert) returns score (2+M, 3), protein ChainSampler (pert only) returns score (P, 3)
+- DiffusionDataset pattern: sampler(x) with x shape (1, N, 3), returns (x_t torch, score numpy, norm numpy, ts numpy)
+- Save/restore np.random and torch.random state around diffusion calls for reproducibility
+- Force targets go in 'diffused' dict as 'mol_real_forces' and 'pocket_real_forces'; 'force_tier' at sample level
+- DiffusionTrainer.train_step/valid_step return (loss, loss_dict) tuple; diffusion_loss takes full batch dict (not just diffused_dict)
+- dtmol_train_test.py is gitignored — use `git add -f` to stage it
+
+---
+
+## 2026-04-11 - US-001
+- Implemented UnifiedRecord TypedDict with all required/optional fields in dtmol/data/converters/base.py
+- Implemented BaseConverter ABC with compute_neighbor_list (KDTree), validate_record, write_lmdb
+- Created CLI at dtmol/data/convert.py with argparse and converter registry pattern
+- Created atom_mapping.json mapping atomic number Z -> UniMol dict symbol (26 elements from molecule dict)
+- Created package init files for dtmol/data/ and dtmol/data/converters/
+- Files changed: dtmol/data/__init__.py, dtmol/data/converters/__init__.py, dtmol/data/converters/base.py, dtmol/data/convert.py, dtmol/data/atom_mapping.json
+- **Learnings for future iterations:**
+  - TypedDict keys accessed with variable names need `dict(record)` cast for mypy
+  - Dict files have no count column — just one symbol per line
+  - Protein dict only has C, N, O, S, H (atom-level, not residue)
+  - write_lmdb uses `subdir=False` for single-file LMDB (consistent with existing codebase)
+---
+
+## 2026-04-11 - US-002
+- Implemented PDBBindConverter in dtmol/data/converters/pdbbind.py
+- Reads existing PDBBind LMDB files (train/valid/test) with subdir=False
+- Maps atom symbols to atomic numbers via _SYMBOL_TO_Z lookup dict
+- Concatenates protein (pocket) + ligand atoms/coords, sets component_mask (0=protein, 1=ligand)
+- Computes neighbor_list with 5A cutoff on concatenated positions
+- Preserves train/valid/test splits as separate output LMDB files
+- Registered 'pdbbind' in convert.py CLI dispatch
+- Files changed: dtmol/data/converters/pdbbind.py (new), dtmol/data/convert.py (uncommented pdbbind import)
+- **Learnings for future iterations:**
+  - PDBBind LMDB records have `pdb_id` or `pocket` field for system identification
+  - Pocket atoms are stored as full atom names (e.g. 'CA', 'CB'); use first character for element symbol
+  - Coordinates can be a list of arrays (multiple conformations) — always check ndim and take first if 3D
+  - Self-registration pattern: converter module calls register() at import time, convert.py just imports the module
+---
+
+## 2026-04-11 - US-003
+- Implemented QM9Converter in dtmol/data/converters/qm9.py
+- Supports two input formats: directory of .xyz files (QM9 extended XYZ) and SDF file + property CSV
+- Extracts HOMO, LUMO, dipole, internal energy U0 with Hartree->eV conversion (27.2114 eV/Hartree)
+- Sets pes_tier='C', forces=None, component_mask=None (single molecule), dataset_source='qm9'
+- Computes neighbor_list with 5A cutoff
+- 80/10/10 random split with seed=42
+- Registered 'qm9' in convert.py CLI dispatch
+- Files changed: dtmol/data/converters/qm9.py (new), dtmol/data/convert.py (uncommented qm9 import)
+- **Learnings for future iterations:**
+  - QM9 .xyz files use tab-separated property lines with "gdb <index>" prefix
+  - QM9 .xyz files may contain scientific notation with `*^` instead of `e` (e.g. `1.5*^-6`)
+  - QM9 only has 5 element types: H, C, N, O, F
+  - Dipole moment in QM9 is a scalar (mu in Debye), stored as [mu, 0, 0] since full vector isn't available
+  - Property CSV is 1-indexed but SDF supplier is 0-indexed — use mol_idx+1 as key
+---
+
+## 2026-04-11 - US-004
+- Implemented ANI2xConverter in dtmol/data/converters/ani2x.py
+- Reads ANI-2x HDF5: iterates molecule groups with species, coordinates, energies, forces
+- Creates one UnifiedRecord per conformation (flattens molecule x conformation)
+- Unit conversion: Hartree -> eV (27.2114), Hartree/Bohr -> eV/A (51.422 eV/A)
+- Sets pes_tier='A', component_mask=None (single molecule), dataset_source='ani2x'
+- system_id = molecule group name + conformation index
+- Splits by molecule (not conformation) to avoid data leakage: 80/10/10
+- Registered 'ani2x' in convert.py CLI dispatch
+- Files changed: dtmol/data/converters/ani2x.py (new), dtmol/data/convert.py (uncommented ani2x import)
+- **Learnings for future iterations:**
+  - ANI-2x species may be stored as bytes in HDF5 — decode with .decode("utf-8") if needed
+  - h5py not installed by default — may need `pip install h5py`
+  - ANI-2x element set: H, C, N, O, S, F, Cl
+  - Force unit conversion chain: Hartree/Bohr * (27.2114 eV/Hartree) / (0.529177 A/Bohr) = eV/A
+---
+
+## 2026-04-11 - US-005
+- Implemented SPICE2Converter in dtmol/data/converters/spice2.py
+- Reads SPICE v2 HDF5: iterates molecule groups with atomic_numbers, conformations, dft_total_energy, dft_total_gradient, optional mbis_charges
+- Unit conversion: kJ/mol -> eV (÷96.485), kJ/mol/nm -> eV/A (÷96.485 ÷10)
+- Forces = -gradient (negated from dft_total_gradient)
+- Dimer detection via connectivity (Union-Find on 1.8A covalent cutoff): sets component_mask 0/1 for two disconnected fragments
+- Extracts partial_charges from mbis_charges when available
+- Sets pes_tier='A', dataset_source='spice2'
+- Splits by molecule 80/10/10, computes neighbor_list with 5A cutoff
+- Registered 'spice2' in convert.py CLI dispatch
+- Files changed: dtmol/data/converters/spice2.py (new), dtmol/data/convert.py (uncommented spice2 import)
+- **Learnings for future iterations:**
+  - SPICE v2 uses kJ/mol and kJ/mol/nm units (not Hartree like ANI-2x)
+  - SPICE v2 stores gradients (not forces) — must negate to get forces
+  - Dimer component detection uses connectivity-based Union-Find with 1.8A covalent cutoff
+  - SPICE v2 HDF5 keys: atomic_numbers, conformations, dft_total_energy, dft_total_gradient, mbis_charges (optional)
+---
+
+## 2026-04-11 - US-006
+- Implemented MISATOConverter in dtmol/data/converters/misato.py
+- Reads MISATO MD HDF5: iterates PDB ID groups with trajectory_coordinates (T x N x 3), atoms_type, atoms_residue
+- Creates one UnifiedRecord per frame with positions_prev/positions_next from consecutive frames
+- Finite-difference force approximation: F = (positions_next - positions) / dt
+- Component mask via atoms_residue classification: protein residues=0, ligand=1, water stripped
+- Sets pes_tier='B', trajectory_id=pdb_id, timestep=frame_index, dataset_source='misato'
+- Supports --dedup-list flag for PDBBind deduplication and --affinity-index for binding affinity merging
+- Added --dedup-list, --no-dedup, --affinity-index CLI args to convert.py with extra_kwargs passthrough
+- Registered 'misato' in convert.py CLI dispatch
+- Files changed: dtmol/data/converters/misato.py (new), dtmol/data/convert.py (updated)
+- **Learnings for future iterations:**
+  - MISATO HDF5 keys: trajectory_coordinates (T, N, 3), atoms_type (N,), atoms_residue (N,)
+  - MISATO atoms_residue may be stored as bytes — decode with .decode("utf-8") if needed
+  - Water stripping is essential for MISATO — water atoms (HOH, WAT, TIP3) significantly inflate atom count
+  - MISATO-specific CLI args are passed as extra_kwargs to convert(); other converters ignore them
+  - The base convert() signature is abstract — subclasses can add extra kwargs without breaking the interface
+  - Component classification uses standard amino acid 3-letter codes for protein; everything non-water, non-protein is ligand
+---
+
+## 2026-04-11 - US-007
+- Implemented PDBApoConverter in dtmol/data/converters/pdb_apo.py
+- Reads PDB/mmCIF files using BioPython PDBParser/MMCIFParser
+- Extracts heavy atom coordinates and types (excludes hydrogens)
+- Sets component_mask=[0]*N (protein only), pes_tier='C', forces=None, dataset_source='pdb_apo'
+- system_id derived from filename stem
+- Takes first model only for multi-model files
+- 80/10/10 random split with seed=42
+- Registered 'pdb_apo' in convert.py CLI dispatch
+- Files changed: dtmol/data/converters/pdb_apo.py (new), dtmol/data/convert.py (uncommented pdb_apo import)
+- **Learnings for future iterations:**
+  - BioPython needs `pip install biopython` — not installed by default
+  - BioPython Atom.element gives the element symbol; fallback to parsing atom name if empty
+  - Supported extensions: .pdb, .ent, .cif, .mmcif
+  - PDB apo converter is simpler than other converters — no ligand, no forces, just protein heavy atoms
+---
+
+## 2026-04-11 - US-008
+- Implemented IRCConverter in dtmol/data/converters/irc.py
+- Reads Transition1x HDF5: recursively finds reaction groups containing atomic_numbers, positions, energies, forces/gradients
+- Creates one UnifiedRecord per structure along IRC path
+- Computes relative_energy = energy - min(energies) per reaction path
+- Unit conversion: Hartree -> eV, Hartree/Bohr -> eV/A (same as ANI-2x)
+- Handles both 'forces' and 'gradients' keys (negates gradients)
+- Sets pes_tier='A', trajectory_id=reaction_key, timestep=structure_index, dataset_source='irc'
+- Splits by reaction (not structure) to avoid data leakage: 80/10/10
+- Registered 'irc' in convert.py CLI dispatch
+- Files changed: dtmol/data/converters/irc.py (new), dtmol/data/convert.py (uncommented irc import)
+- **Learnings for future iterations:**
+  - Transition1x HDF5 has nested groups — use visititems() to recursively find reaction data
+  - Look for groups containing both 'atomic_numbers' and 'positions' as the reaction leaf groups
+  - atomic_numbers may be (N,) shared or (M, N) per structure — handle both cases
+  - Forces may be stored as 'forces' or 'gradients' — check both keys, negate gradients
+  - relative_energy is per-reaction-path (subtract min energy of that specific reaction)
+---
+
+## 2026-04-11 - US-009
+- Implemented UnifiedDataset(torch.utils.data.Dataset) in dtmol/data/unified_dataset.py
+- Reads unified LMDB lazily (keys at init, records in __getitem__)
+- Maps atom_types (Z) -> UniMol dictionary token indices via atom_mapping.json
+- Splits atoms into ligand (component_mask=1 or None) and protein (component_mask=0) groups
+- For ligand: tokenizes via ligand_dict, computes pairwise distances, edge types, displacements
+- For protein: tokenizes via protein_dict, computes pairwise distances, edge types, displacements
+- Computes cross-molecule distances, displacements, and edge types between ligand and protein
+- Prepends BOS, appends EOS tokens with np.inf coordinate padding (matching CrossDataset)
+- Truncates to max_seq_len for ligand and max_pocket_atoms for protein
+- Normalizes coordinates by subtracting protein centroid (or molecule centroid if no protein)
+- Returns dict matching CrossDataset format: net_input with mol_* and pocket_* keys, plus pes_tier
+- Implements collate_fn that pads batches: np.inf for coordinates, pad token (1) for tokens, 0 for distances/displacements
+- UnifiedDatasetConfig dataclass for max_seq_len, max_pocket_atoms, seed, frame_stride
+- Files changed: dtmol/data/unified_dataset.py (new)
+- **Learnings for future iterations:**
+  - CrossDataset uses np.inf for coordinate padding, 0.0 for distance/displacement padding
+  - Edge type formula: token[i] * num_dict_entries + token[j]
+  - Cross edge type uses mol token count (num_mol_dict) as multiplier, not protein dict
+  - BOS/EOS are added AFTER computing distance/displacement matrices, then 2D/3D matrices are padded with 0.0
+  - Holo coordinates == src coordinates for unified data (no separate apo/holo distinction in unified format)
+  - Protein-only records (component_mask all 0): treat as ligand-only with all atoms as "ligand"
+  - collate_fn is a static method on UnifiedDataset for easy use with DataLoader
+---
+
+## 2026-04-11 - US-010
+- Implemented dummy protein path for single-molecule datasets in UnifiedDataset.__getitem__
+- When no protein atoms: creates dummy protein with single pad token (index 1), zero coordinates (1, 3), zero distance/edge/displacement matrices (1, 1)
+- Cross-distance and cross-edge-type tensors use shape (mol_len, 1) with zeros
+- Added `single_molecule_mask` boolean to sample dict and batch dict (collated as torch.bool tensor)
+- collate_fn handles mixed batches (some with real protein, some dummy) via existing padding helpers — dummy protein (size 1) pads up to max protein length in batch
+- Added comments documenting that the decoder must zero out cross-attention weights when single_molecule_mask is True
+- Files changed: dtmol/data/unified_dataset.py
+- **Learnings for future iterations:**
+  - Dummy protein uses size 1 (not 0) so all tensor operations remain valid — avoids empty-tensor edge cases in distance/displacement computation
+  - The existing _pad_1d, _pad_2d, _pad_cross_2d helpers already handle different-sized tensors correctly, so mixed batches work without collate changes
+  - single_molecule_mask is per-sample (not per-batch), enabling mixed batches with both protein-ligand and molecule-only samples
+---
+
+## 2026-04-11 - US-011
+- Implemented diffusion sampling in UnifiedDataset.__getitem__ for all PES tiers
+- Molecule diffusion: applies ChainSampler (rot->tr->pert), splits score into trrot (2,3) and perturb (M,3) components
+- Protein diffusion: applies ChainSampler (pert only), produces pocket_diffuse_score/norm
+- Dummy protein diffusion: zero tensors matching dummy protein pattern when has_protein=False
+- Cross distance/displacement recomputed between diffused molecule and diffused protein coordinates
+- Force targets for Tier A/B: reads record['forces'], splits by component_mask, pads with BOS/EOS zeros
+- Zero force placeholders for Tier C samples ensure uniform batch keys in mixed-tier batches
+- MISATO frame_stride: skips records where timestep % frame_stride != 0, advances to next valid index
+- Added set_epoch(epoch) method for reproducible diffusion sampling across epochs
+- Updated collate_fn to pad all diffused dict tensors (coords, distances, displacements, scores, norms, forces, cross matrices)
+- Added force_tier collation as list of strings for per-sample loss dispatch
+- Files changed: dtmol/data/unified_dataset.py
+- **Learnings for future iterations:**
+  - ChainSampler score concatenation: rot score (B,1,3) + tr score (B,1,3) + pert score (B,N,3) → (B, 2+N, 3)
+  - ChainSampler norm: (B, 2+N) — first 2 are system-wise (rot, tr), rest are per-atom (pert)
+  - Diffusion samplers use both instance RNG (self.rng for time sampling) and global numpy/torch RNG (for noise)
+  - Save/restore global random state around diffusion to avoid side effects on other dataset operations
+  - x_t from sampler is torch.Tensor; score and norm are numpy arrays — convert appropriately
+  - Dummy protein diffused entries must include pocket_diffuse_time (set to 0) for consistent batch keys
+  - Force targets always exist in diffused dict (zero placeholders for non-force tiers) to simplify collation
+---
+
+## 2026-04-11 - US-012
+- Implemented tier-aware force loss in DiffusionTrainer.diffusion_loss
+- Added force loss parameters to CONFIG class: lambda_force, lambda_fd_force, force_loss_fn ('mse' or 'smooth_l1')
+- diffusion_loss now accepts full batch dict (not just diffused_dict) to access force_tier per sample
+- Per-sample tier masking: Tier A samples use lambda_force * MSE(pred, real_forces/norm), Tier B use lambda_fd_force * MSE(pred, fd_forces/norm)
+- Force normalization: divides forces by perturbation_norm (clamped min=1e-6) to match diffusion score scale
+- Padding masking: reuses padding_mask for molecule, uses pocket_norm==0 for pocket padding
+- train_step and valid_step now return (loss, loss_dict) tuple with separate diffusion_loss, force_loss, total_loss
+- Separate wandb logging: train_loss, train_diffusion_loss, train_force_loss, valid_loss, valid_diffusion_loss, valid_force_loss
+- Backward compatible: with default CONFIG (lambda_force=0.0, lambda_fd_force=0.0), no force loss is computed
+- Files changed: dtmol/dtmol_train_base.py, dtmol/dtmol_train_test.py
+- **Learnings for future iterations:**
+  - diffusion_loss signature changed from (output, padding_mask, diffused_dict) to (output, padding_mask, batch) — callers must pass full batch
+  - train_step/valid_step now return (loss, loss_dict) tuple instead of just loss — callers must unpack
+  - F.smooth_l1_loss and F.mse_loss have slightly different signatures — use a wrapper method to avoid mypy issues
+  - Force norm uses perturbation_norm (from diffusion sampler) to scale forces to the same magnitude as diffusion scores
+  - Per-sample tier masking via boolean tensor indexing: tier_a_mask[i] = (force_tiers[i] == 'A')
+  - dtmol_train_test.py is gitignored — need `git add -f` to stage it
+---
+
+## 2026-04-11 - US-013
+- Implemented DatasetMixer class in dtmol/data/mixer.py
+- Wraps multiple UnifiedDataset instances with weighted random sampling
+- Constructor reads datamix.yaml, creates one UnifiedDataset per entry with per-dataset config overrides (e.g. frame_stride)
+- Sampling: __getitem__ draws from a dataset chosen by weighted random sampling; __len__ returns sum of all dataset lengths
+- set_epoch(epoch) reseeds RNG and propagates to all child datasets for DistributedSampler compatibility
+- collate_fn delegates to UnifiedDataset.collate_fn (shared across all datasets)
+- get_mixed_dataloader() helper creates DataLoader with optional DistributedSampler
+- Created datamix_default.yaml with pdbbind (0.5), ani2x (0.3), qm9 (0.2) as example mix
+- Files changed: dtmol/data/mixer.py (new), dtmol/data/datamix_default.yaml (new)
+- **Learnings for future iterations:**
+  - PyYAML type stubs (types-PyYAML) needed for mypy to pass with yaml import
+  - Weights are normalized internally so users can use any relative scale
+  - Per-dataset config overrides (like frame_stride) are handled via separate UnifiedDatasetConfig per dataset
+  - DatasetMixer uses modular index mapping (idx % len(ds)) since weighted sampling chooses dataset independently of index
+---
+
+## 2026-04-11 - US-014
+- Implemented cross-attention masking in Decoder.forward for single-molecule inputs
+- Added `single_molecule_mask` optional parameter to Decoder.forward (default None for backward compatibility)
+- In get_cross_attn closure: when single_molecule_mask[i] is True, sets cross-attention bias to -inf for both molecule-to-protein and protein-to-molecule blocks
+- Updated ScoreNetwork.forward in dtmol_model.py to pass `single_molecule_mask` from batch dict to decoder (uses batch.get() so legacy batches without the key work unchanged)
+- Mixed batches work correctly: per-sample masking via boolean tensor indexing on the batch dimension
+- No change to decoder behavior when single_molecule_mask is None or all-False (fully backward compatible)
+- Files changed: dtmol/decoder.py, dtmol/dtmol_model.py
+- **Learnings for future iterations:**
+  - get_cross_attn is a closure inside Decoder.forward — it captures variables from the enclosing scope (bsz, n_molecule, n_full, single_molecule_mask)
+  - graph_attn_bias shape is [bsz, heads, n_full, n_full] before reshape — masking must be done before the .view(-1, n_full, n_full)
+  - Use .nonzero(as_tuple=True)[0] for efficient boolean-to-index conversion for tensor fancy indexing
+  - ScoreNetwork.forward passes the full batch dict, so batch.get('single_molecule_mask', None) is safe for legacy batches
+  - eval_once calls self.forward which goes through the same path, so masking works for both training and inference
+---
+
+## 2026-04-11 - US-015
+- Added `dataset_mode` field to CONFIG class ('legacy' default, 'unified')
+- Added argparse CLI to dtmol_train_test.py: --dataset-mode, --datamix, --device, --batch-size, --epochs, --lr, --lambda-force, --lambda-fd-force, --force-loss-fn, --use-wandb
+- When dataset_mode='legacy': existing CrossDataset code path unchanged (default behavior)
+- When dataset_mode='unified': imports DatasetMixer + get_mixed_dataloader, builds diffusion samplers, creates mixer from datamix.yaml, and wires up the training loop
+- Passes force loss config (lambda_force, lambda_fd_force, force_loss_fn) through CONFIG to DiffusionTrainer
+- Example usage comment block at the end of the script
+- Existing `python dtmol_train_test.py` with no args still runs in legacy mode
+- Files changed: dtmol/dtmol_train_base.py (CONFIG), dtmol/dtmol_train_test.py (__main__ block)
+- **Learnings for future iterations:**
+  - dtmol_train_test.py is matched by `*test.py` in .gitignore — use `git add -f` to stage
+  - Diffusion sampler defaults: T=1000, tr sigma 0.1-19.0, rot sigma 0.1-1.65, pert sigma 0.04-1.5, sde_format="ve"
+  - CONFIG stores all params in self.TRAIN dict; add new params there (not as separate attributes)
+  - argparse in __main__ block means legacy mode works with no args (all defaults match original behavior)
+---
+
+## 2026-04-12 - US-001 - IMPLEMENTOR — Dataset download script and reference document
+- Created `dtmol/data/download.py` CLI script invokable as `python -m dtmol.data.download`
+- Supports `--data-root`, `--source`, `--all`, `--check`, `--misato-md`, `--pdb-list` flags
+- Auto-downloadable: ANI-2x (Zenodo 10108942), SPICE2 (Zenodo 8222043), Transition1x (Zenodo 7793881), PDB_apo (100 curated RCSB IDs), MISATO QM (Zenodo 7711953)
+- Detects pre-existing QM9 and PDBBind as FOUND and skips them
+- Downloads use `requests` with Range headers for resume support + `tqdm` for progress bars
+- Created `dtmol/data/DATASETS.md` with table per dataset: name, source URL, size, license, raw format, converter command
+- Files changed: dtmol/data/download.py (new), dtmol/data/DATASETS.md (new)
+- **Environment notes for Tester:**
+  - `requests` and `tqdm` are already installed in the environment
+  - `types-requests` was installed for mypy stubs
+  - `--check` flag scans /data/dtMol_Project/datasets and prints FOUND/MISSING table — should show QM9 and PDBBind as FOUND
+  - `--help` output includes all required flags
+  - Actual downloads (--source, --all) require network access to Zenodo/RCSB
+  - Typecheck: `python3 -m mypy --ignore-missing-imports dtmol/data/download.py`
+---
