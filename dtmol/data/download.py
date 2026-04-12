@@ -13,6 +13,7 @@ import gzip
 import os
 import shutil
 import sys
+import tarfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -41,7 +42,7 @@ _PDB_APO_IDS: List[str] = [
 
 
 def _zenodo_file_url(record_id: int, filename: str) -> str:
-    return f"https://zenodo.org/records/{record_id}/files/{filename}"
+    return f"https://zenodo.org/api/records/{record_id}/files/{filename}/content"
 
 
 # Each dataset entry:
@@ -142,19 +143,26 @@ def _download_and_extract_gz(url: str, dest: Path, desc: Optional[str] = None) -
 def _download_ani2x(root: str, **kwargs: Any) -> None:
     dest_dir = Path(root) / "ANI-2x"
     dest_dir.mkdir(parents=True, exist_ok=True)
-    # ANI-2x on Zenodo record 10108942
-    url = _zenodo_file_url(10108942, "ANI-2x-wB97X-631Gd.h5")
-    dest = dest_dir / "ANI-2x-wB97X-631Gd.h5"
-    if dest.exists():
-        print(f"  Already exists: {dest}")
+    # Check if HDF5 already extracted (may be in a subdirectory from tarball)
+    h5_files = list(dest_dir.rglob("*.h5"))
+    if h5_files:
+        print(f"  Already exists: {h5_files[0]}")
         return
-    _download_file(url, dest, desc="ANI-2x HDF5")
+    # ANI-2x on Zenodo record 10108942 — distributed as tar.gz
+    url = _zenodo_file_url(10108942, "ANI-2x-wB97X-631Gd.tar.gz")
+    tarball = dest_dir / "ANI-2x-wB97X-631Gd.tar.gz"
+    _download_file(url, tarball, desc="ANI-2x tar.gz")
+    print("  Extracting ANI-2x tar.gz ...")
+    with tarfile.open(tarball, "r:gz") as tf:
+        tf.extractall(path=dest_dir)
+    tarball.unlink()
+    print("  Extraction complete.")
 
 
 _register("ani2x", {
     "dir_name": "ANI-2x",
-    "detect": lambda root: any((Path(root) / "ANI-2x").glob("*.h5")),
-    "size_hint": "~7 GB",
+    "detect": lambda root: any((Path(root) / "ANI-2x").rglob("*.h5")),
+    "size_hint": "~3.7 GB (compressed)",
     "auto": True,
     "download": _download_ani2x,
     "license": "CC BY 4.0",
@@ -168,32 +176,34 @@ _register("ani2x", {
 def _download_spice2(root: str, **kwargs: Any) -> None:
     dest_dir = Path(root) / "SPICE2"
     dest_dir.mkdir(parents=True, exist_ok=True)
-    url = _zenodo_file_url(8222043, "SPICE-2.0.0.hdf5")
-    dest = dest_dir / "SPICE-2.0.0.hdf5"
+    # SPICE 1.1.4 on Zenodo record 8222043 (largest available HDF5 release)
+    url = _zenodo_file_url(8222043, "SPICE-1.1.4.hdf5")
+    dest = dest_dir / "SPICE-1.1.4.hdf5"
     if dest.exists():
         print(f"  Already exists: {dest}")
         return
-    _download_file(url, dest, desc="SPICE2 HDF5")
+    _download_file(url, dest, desc="SPICE HDF5")
 
 
 _register("spice2", {
     "dir_name": "SPICE2",
     "detect": lambda root: any((Path(root) / "SPICE2").glob("*.hdf5")) or any((Path(root) / "SPICE2").glob("*.h5")),
-    "size_hint": "~3 GB",
+    "size_hint": "~16 GB",
     "auto": True,
     "download": _download_spice2,
     "license": "CC BY 4.0",
     "citation": "Eastman et al., Sci. Data 10, 11 (2023)",
     "source_url": "https://zenodo.org/records/8222043",
     "raw_format": "HDF5",
-    "converter_cmd": "python -m dtmol.data.convert --source spice2 --input <root>/SPICE2/SPICE-2.0.0.hdf5 --output <root>/SPICE2/unified",
+    "converter_cmd": "python -m dtmol.data.convert --source spice2 --input <root>/SPICE2/SPICE-1.1.4.hdf5 --output <root>/SPICE2/unified",
 })
 
 # --- Transition1x ---
 def _download_transition1x(root: str, **kwargs: Any) -> None:
     dest_dir = Path(root) / "Transition1x"
     dest_dir.mkdir(parents=True, exist_ok=True)
-    url = _zenodo_file_url(7793881, "Transition1x.h5")
+    # Transition1x on figshare article 19614657
+    url = "https://ndownloader.figshare.com/files/36035789"
     dest = dest_dir / "Transition1x.h5"
     if dest.exists():
         print(f"  Already exists: {dest}")
@@ -209,7 +219,7 @@ _register("transition1x", {
     "download": _download_transition1x,
     "license": "CC BY 4.0",
     "citation": "Schreiner et al., Sci. Data 9, 779 (2022)",
-    "source_url": "https://zenodo.org/records/7793881",
+    "source_url": "https://figshare.com/articles/dataset/Transition1x/19614657",
     "raw_format": "HDF5",
     "converter_cmd": "python -m dtmol.data.convert --source irc --input <root>/Transition1x/Transition1x.h5 --output <root>/Transition1x/unified",
 })
@@ -265,8 +275,8 @@ def _download_misato(root: str, misato_md: bool = False, **kwargs: Any) -> None:
     dest_dir.mkdir(parents=True, exist_ok=True)
 
     # QM portion (~300MB)
-    qm_url = "https://zenodo.org/records/7711953/files/QM_data.hdf5"
-    qm_dest = dest_dir / "QM_data.hdf5"
+    qm_url = _zenodo_file_url(7711953, "QM.hdf5")
+    qm_dest = dest_dir / "QM.hdf5"
     if not qm_dest.exists():
         _download_file(qm_url, qm_dest, desc="MISATO QM")
     else:
@@ -279,8 +289,8 @@ def _download_misato(root: str, misato_md: bool = False, **kwargs: Any) -> None:
         if confirm != "y":
             print("  Skipping MISATO MD download.")
             return
-        md_url = "https://zenodo.org/records/7711953/files/MD_data.hdf5"
-        md_dest = dest_dir / "MD_data.hdf5"
+        md_url = _zenodo_file_url(7711953, "MD.hdf5")
+        md_dest = dest_dir / "MD.hdf5"
         if not md_dest.exists():
             _download_file(md_url, md_dest, desc="MISATO MD")
         else:
@@ -297,7 +307,7 @@ _register("misato", {
     "citation": "Siebenmorgen et al., J. Chem. Inf. Model. 64, 2539 (2024)",
     "source_url": "https://zenodo.org/records/7711953",
     "raw_format": "HDF5",
-    "converter_cmd": "python -m dtmol.data.convert --source misato --input <root>/MISATO/QM_data.hdf5 --output <root>/MISATO/unified",
+    "converter_cmd": "python -m dtmol.data.convert --source misato --input <root>/MISATO/QM.hdf5 --output <root>/MISATO/unified",
 })
 
 
