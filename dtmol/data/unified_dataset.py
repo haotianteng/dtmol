@@ -261,7 +261,7 @@ class UnifiedDataset(Dataset):  # type: ignore[type-arg]
         if (self.config.frame_stride > 1
                 and record.get('dataset_source') == 'misato'):
             attempts = 0
-            while (record.get('timestep', 0) % self.config.frame_stride != 0
+            while ((record.get('timestep') or 0) % self.config.frame_stride != 0
                    and attempts < len(self)):
                 idx = (idx + 1) % len(self)
                 record = self._read_record(idx)
@@ -691,6 +691,17 @@ class UnifiedDataset(Dataset):  # type: ignore[type-arg]
             for k in ('mol_diffuse_time', 'pocket_diffuse_time'):
                 if k in dd[0]:
                     bd[k] = torch.stack([d[k] for d in dd])
+
+            # Combine trrot + perturb into a single mol_diffuse_score / norm
+            # so DiffusionTrainer.diffusion_loss can slice [:, :2, :] for trrot.
+            if 'mol_diffuse_trrot_score' in bd and 'mol_diffuse_perturb_score' in bd:
+                bd['mol_diffuse_score'] = torch.cat(
+                    [bd['mol_diffuse_trrot_score'], bd['mol_diffuse_perturb_score']],
+                    dim=1)
+            if 'mol_diffuse_trrot_norm' in bd and 'mol_diffuse_perturb_norm' in bd:
+                bd['mol_diffuse_norm'] = torch.cat(
+                    [bd['mol_diffuse_trrot_norm'], bd['mol_diffuse_perturb_norm']],
+                    dim=1)
 
             batch['diffused'] = bd
 

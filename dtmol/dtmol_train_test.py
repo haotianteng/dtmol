@@ -94,16 +94,40 @@ class DiffusionTrainer(Trainer):
                             }
                             wandb.log(log_dict)
 
+    def _call_decoder(self, batch, mole_input, pocket_input, mole_embd, pocket_embd,
+                      mole_padding, pocket_padding, mole_attn, pocket_attn):
+        """Call decoder with proper args matching Decoder.forward signature."""
+        mole_time = batch['diffused']['mol_diffuse_time'].view(-1)
+        pocket_time = batch['diffused']['pocket_diffuse_time'].view(-1)
+        cross_dist = batch['diffused']['cross_distance']
+        cross_edges = batch['diffused']['cross_edge_type']
+        single_molecule_mask = batch.get('single_molecule_mask', None)
+        output, padding_mask = self.nets['decoder'](
+            embd_molecule=mole_embd,
+            embd_protein=pocket_embd,
+            coor_molecule=mole_input['src_coord'],
+            coor_protein=pocket_input['src_coord'],
+            timesteps=mole_time,
+            padding_molecule=mole_padding,
+            padding_protein=pocket_padding,
+            attn_mole=mole_attn,
+            attn_protein=pocket_attn,
+            cross_distance=cross_dist,
+            cross_edges=cross_edges,
+            diffusion_heads=["tr-rotation", "perturbation"],
+            single_molecule_mask=single_molecule_mask,
+        )
+        return output, padding_mask
+
     def train_step(self, batch):
         mole_input = self._get_mole_diffused(batch)
         pocket_input = self._get_pocket_diffused(batch)
         (mole_embd, mole_attn, mole_padding) = self.nets['ligand_encoder'](**mole_input, features_only=True)
         (pocket_embd, pocket_attn, pocket_padding) = self.nets['protein_encoder'](**pocket_input, features_only=True)
 
-        output, padding_mask = self.nets['decoder'](mole_embd, pocket_embd, mole_padding, pocket_padding,
-                                                    mole_attn, pocket_attn, batch['net_input']['cross_distance'],
-                                                    batch['net_input']['cross_edge_type'],
-                                                    diffusion_heads=["tr-rotation", "perturbation"])
+        output, padding_mask = self._call_decoder(
+            batch, mole_input, pocket_input, mole_embd, pocket_embd,
+            mole_padding, pocket_padding, mole_attn, pocket_attn)
         loss_dict = self.diffusion_loss(output, padding_mask.clone(), batch)
         loss = loss_dict['total_loss']
         return loss, loss_dict
@@ -115,10 +139,9 @@ class DiffusionTrainer(Trainer):
             (mole_embd, mole_attn, mole_padding) = self.nets['ligand_encoder'](**mole_input, features_only=True)
             (pocket_embd, pocket_attn, pocket_padding) = self.nets['protein_encoder'](**pocket_input, features_only=True)
 
-            output, padding_mask = self.nets['decoder'](mole_embd, pocket_embd, mole_padding, pocket_padding,
-                                                        mole_attn, pocket_attn, batch['net_input']['cross_distance'],
-                                                        batch['net_input']['cross_edge_type'],
-                                                        diffusion_heads=["tr-rotation", "perturbation"])
+            output, padding_mask = self._call_decoder(
+                batch, mole_input, pocket_input, mole_embd, pocket_embd,
+                mole_padding, pocket_padding, mole_attn, pocket_attn)
             loss_dict = self.diffusion_loss(output, padding_mask.clone(), batch)
             loss = loss_dict['total_loss']
 
@@ -132,15 +155,25 @@ class DiffusionTrainer(Trainer):
 
     def diffusion_loss(self, output, padding_mask, batch, atom_diffusion=False):
         diffused_dict = batch['diffused']
-        padding_mask[:, :2] = True  # Exclude the first two elements which is predicted by tr-rotation head
-        mol_score = diffused_dict['mol_diffuse_score'].to(torch.float32)
-        mol_trrot_score = mol_score[:, :2, :]
-        mol_norm = diffused_dict['mol_diffuse_norm'].to(torch.float32)
-        mol_trrot_norm = mol_norm[:, :2]
+        # Use separate trrot/perturb keys if available (UnifiedDataset format),
+        # otherwise fall back to combined mol_diffuse_score (CrossDataset format).
+        if 'mol_diffuse_trrot_score' in diffused_dict:
+            # trrot has exactly 2 real rows (rot, tr); legacy CrossDataset may
+            # pad to mol_length, so always slice to [:, :2].
+            mol_trrot_score = diffused_dict['mol_diffuse_trrot_score'][:, :2, :].to(torch.float32)
+            mol_trrot_norm = diffused_dict['mol_diffuse_trrot_norm'][:, :2].to(torch.float32)
+            mol_perturb_score = diffused_dict['mol_diffuse_perturb_score'].to(torch.float32)
+            mol_perturb_norm = diffused_dict['mol_diffuse_perturb_norm'].to(torch.float32)
+        else:
+            mol_score = diffused_dict['mol_diffuse_score'].to(torch.float32)
+            mol_trrot_score = mol_score[:, :2, :]
+            mol_trrot_norm = diffused_dict['mol_diffuse_norm'].to(torch.float32)[:, :2]
+            mol_perturb_score = mol_score[:, 2:, :]
+            mol_perturb_norm = diffused_dict['mol_diffuse_norm'].to(torch.float32)[:, 2:]
         pocket_score = diffused_dict['pocket_diffuse_score'].to(torch.float32)
         pocket_norm = diffused_dict['pocket_diffuse_norm'].to(torch.float32)
-        perturbation_score = torch.cat([mol_score, pocket_score], axis=1)
-        perturbation_norm = torch.cat([mol_norm, pocket_norm], axis=1)
+        perturbation_score = torch.cat([mol_perturb_score, pocket_score], axis=1)
+        perturbation_norm = torch.cat([mol_perturb_norm, pocket_norm], axis=1)
         tr_rot = output['tr-rotation'].view(-1, 2, 3)  # [B,6] -> [B,2,3]
         pert = output['perturbation']
         trrot_loss = self.nets['decoder'].diffusion_heads['tr-rotation'].loss(tr_rot, mol_trrot_score, mol_trrot_norm)
@@ -157,7 +190,7 @@ class DiffusionTrainer(Trainer):
         force_tiers = batch.get('force_tier')
         if (self.lambda_force > 0.0 or self.lambda_fd_force > 0.0) and force_tiers is not None:
             bsz = pert.size(0)
-            mol_len = mol_score.size(1)
+            mol_len = mol_perturb_score.size(1)
 
             # Split perturbation prediction into mol and pocket parts
             pred_mol = pert[:, :mol_len, :]   # [B, M, 3]

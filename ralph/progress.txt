@@ -795,3 +795,43 @@
   - 7 skips are expected (dataset-type-specific tests skip for non-matching datasets)
   - Test runtime: ~53 seconds
 ---
+
+## 2026-04-12 - US-014 - TESTER — UnifiedDataset integration tests on all 7 real datasets
+- Executed `python3 -m pytest dtmol/data/tests/test_unified_dataset.py -v`
+- Result: **112 passed, 7 skipped** in 52.81s (exit code 0)
+- 7 skips are expected: dataset-type-specific tests (e.g. test_protein_ligand_has_real_pocket skips for single-molecule datasets)
+- All 7 real datasets loaded and validated: QM9, ANI-2x, Transition1x, SPICE2, PDBBind, MISATO, PDB_apo
+- Verified: output dict structure (17 net_input keys), tensor shapes, finite distances/edge types
+- Verified: single_molecule_mask correctness (True for molecule-only + PDB_apo, False for protein-ligand)
+- Verified: collate_fn produces valid padded batches with correct shapes for all datasets
+- Mypy typecheck: Success, no issues found
+- **Verdict: TEST_PASSED**
+- Artifacts at: ralph/test_results/US-014/attempt-1/
+---
+
+## 2026-04-12 - US-015 - IMPLEMENTOR — DatasetMixer and training loop integration test on real mixed data
+- Created dtmol/data/tests/test_train_integration.py with 6 test functions in 3 classes
+- TestMixedTrainStep: builds DatasetMixer from datamix_default.yaml (filters to available LMDBs), constructs encoder/decoder/DiffusionTrainer, runs train_step on 3 batches (batch_size=2, CPU), validates loss dict keys and finite values
+- TestTierAwareForce: verifies tier_a_force_loss/tier_b_force_loss appear when lambda_force/lambda_fd_force > 0 and respective tier data is sampled
+- TestLegacyMode: loads PDBBind via CrossDataset, runs one train_step, checks finite loss
+- Fixed integration bugs discovered during testing:
+  - unified_dataset.py: MISATO timestep None guard (record.get('timestep') or 0)
+  - unified_dataset.py: collate_fn combines trrot+perturb scores into mol_diffuse_score for DiffusionTrainer
+  - dtmol_train_test.py: fixed Decoder.forward call with all required args (coor_molecule, coor_protein, timesteps, single_molecule_mask)
+  - dtmol_train_test.py: diffusion_loss now uses split trrot/perturb keys (works with both CrossDataset and UnifiedDataset)
+  - dtmol_train_test.py: slice trrot_score[:, :2] to handle CrossDataset padding
+- Files changed: dtmol/data/tests/test_train_integration.py (new), dtmol/data/unified_dataset.py, dtmol/dtmol_train_test.py
+- Results: 5 passed, 1 skipped (tier B force — MISATO records lack force data). Mypy: Success. Existing 112 tests: no regressions
+- **Environment notes for Tester:**
+  - pytest-timeout required: `pip install pytest-timeout`
+  - sde_format must be uppercase "VE" (not "ve") for diffusion samplers
+  - Tier B test skips because MISATO unified LMDB records don't store forces; this is expected if MISATO converter didn't include force data
+  - Legacy test requires /data/unimol_data/protein_ligand_binding_pose_prediction/ to be present
+  - Pretrain dicts at dtmol/pretrain_models/ are auto-downloaded on first import
+- **Learnings:**
+  - DiffusionTrainer in dtmol_train_test.py was written with a stale Decoder.forward API — coor_molecule, coor_protein, timesteps were required but not passed
+  - CrossDataset pads mol_diffuse_trrot_score to mol_length (not 2); always slice [:, :2] for trrot
+  - UnifiedDataset collate_fn needed to combine split trrot/perturb scores for DiffusionTrainer compatibility
+  - GaussianSampler checks sde_format case-sensitively: "VE"/"VP" only, not "ve"/"vp"
+  - dict.get(key, default) returns None when key exists with None value; use `or default` pattern
+---
