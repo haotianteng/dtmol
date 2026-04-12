@@ -61,11 +61,11 @@ def _convert_structure(file_path: Path) -> Optional[UnifiedRecord]:
 
     try:
         if suffix in (".cif", ".mmcif"):
-            parser = MMCIFParser(QUIET=True)
-            structure = parser.get_structure(pdb_id, str(file_path))
+            cif_parser = MMCIFParser(QUIET=True)
+            structure = cif_parser.get_structure(pdb_id, str(file_path))
         else:
-            parser = PDBParser(QUIET=True)
-            structure = parser.get_structure(pdb_id, str(file_path))
+            pdb_parser = PDBParser(QUIET=True)
+            structure = pdb_parser.get_structure(pdb_id, str(file_path))
     except Exception:
         logger.warning("Failed to parse %s", file_path, exc_info=True)
         return None
