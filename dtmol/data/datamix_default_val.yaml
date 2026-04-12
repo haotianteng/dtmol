@@ -1,0 +1,32 @@
+# Default validation datamix configuration for dtmol unified training.
+# All 7 converted datasets at /data/dtMol_Project/datasets/.
+# Weights sum to 1.0.
+
+pdbbind:
+  path: /data/dtMol_Project/datasets/PDBBind/unified/valid.lmdb
+  weight: 0.25
+
+misato:
+  path: /data/dtMol_Project/datasets/MISATO/unified/valid.lmdb
+  weight: 0.20
+  frame_stride: 10
+
+ani2x:
+  path: /data/dtMol_Project/datasets/ANI-2x/unified/valid.lmdb
+  weight: 0.15
+
+spice2:
+  path: /data/dtMol_Project/datasets/SPICE2/unified/valid.lmdb
+  weight: 0.15
+
+qm9:
+  path: /data/dtMol_Project/datasets/QM9/unified/valid.lmdb
+  weight: 0.10
+
+irc:
+  path: /data/dtMol_Project/datasets/Transition1x/unified/valid.lmdb
+  weight: 0.10
+
+pdb_apo:
+  path: /data/dtMol_Project/datasets/PDB_apo/unified/valid.lmdb
+  weight: 0.05

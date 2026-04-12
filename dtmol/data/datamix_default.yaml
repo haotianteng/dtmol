@@ -1,18 +1,32 @@
-# Default dataset mix configuration for dtmol unified training.
-# Weights are relative (normalized internally).
-# One representative dataset per PES tier:
-#   - pdbbind (Tier C): protein-ligand binding pose prediction
-#   - ani2x  (Tier A): DFT-level forces for small molecules
-#   - qm9    (Tier C): small-molecule equilibrium properties
+# Default training datamix configuration for dtmol unified training.
+# All 7 converted datasets at /data/dtMol_Project/datasets/.
+# Weights sum to 1.0.
 
 pdbbind:
-  path: /data/unified/pdbbind/train.lmdb
-  weight: 0.5
+  path: /data/dtMol_Project/datasets/PDBBind/unified/train.lmdb
+  weight: 0.25
+
+misato:
+  path: /data/dtMol_Project/datasets/MISATO/unified/train.lmdb
+  weight: 0.20
+  frame_stride: 10
 
 ani2x:
-  path: /data/unified/ani2x/train.lmdb
-  weight: 0.3
+  path: /data/dtMol_Project/datasets/ANI-2x/unified/train.lmdb
+  weight: 0.15
+
+spice2:
+  path: /data/dtMol_Project/datasets/SPICE2/unified/train.lmdb
+  weight: 0.15
 
 qm9:
-  path: /data/unified/qm9/train.lmdb
-  weight: 0.2
+  path: /data/dtMol_Project/datasets/QM9/unified/train.lmdb
+  weight: 0.10
+
+irc:
+  path: /data/dtMol_Project/datasets/Transition1x/unified/train.lmdb
+  weight: 0.10
+
+pdb_apo:
+  path: /data/dtMol_Project/datasets/PDB_apo/unified/train.lmdb
+  weight: 0.05
