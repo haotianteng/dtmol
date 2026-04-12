@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import logging
+import pickle
 from pathlib import Path
 from typing import Dict, List
 
 import h5py
+import lmdb
 import numpy as np
 
 from dtmol.data.converters.base import BaseConverter, UnifiedRecord
@@ -19,14 +21,21 @@ BOHR_TO_ANGSTROM = 0.529177
 # Hartree/Bohr -> eV/Angstrom
 HARTREE_BOHR_TO_EV_ANGSTROM = HARTREE_TO_EV / BOHR_TO_ANGSTROM
 
-# Element symbol -> atomic number
-_SYMBOL_TO_Z: Dict[str, int] = {
-    "H": 1, "C": 6, "N": 7, "O": 8, "S": 16, "F": 9, "Cl": 17,
-}
-
 
 class ANI2xConverter(BaseConverter):
-    """Converter for ANI-2x HDF5 dataset to unified format."""
+    """Converter for ANI-2x HDF5 dataset to unified format.
+
+    The ANI-2x HDF5 has groups keyed by atom count (e.g. '002', '012').
+    Each group has:
+      - species: (M, N) int64 atomic numbers
+      - coordinates: (M, N, 3) float32 positions in Angstrom
+      - energies: (M,) float64 in Hartree
+      - forces: (M, N, 3) float64 in Hartree/Bohr
+
+    Each conformation is a distinct molecule or distinct conformation.
+    We split conformations within each group 80/10/10 to keep the split
+    balanced across atom counts.
+    """
 
     def convert(
         self,
@@ -34,64 +43,64 @@ class ANI2xConverter(BaseConverter):
         output_path: str,
         split_strategy: str = "random",
     ) -> None:
-        """Convert ANI-2x HDF5 to unified LMDB format.
-
-        Each HDF5 group represents a molecule with multiple conformations.
-        Creates one UnifiedRecord per conformation.
-
-        Splits by molecule (not conformation) to avoid data leakage.
-
-        Args:
-            input_path: Path to the ANI-2x HDF5 file.
-            output_path: Directory where output unified LMDB files are written.
-            split_strategy: 'random' splits by molecule (default).
-        """
         input_p = Path(input_path)
         if not input_p.exists():
             raise FileNotFoundError(f"Input file not found: {input_path}")
 
-        # First pass: collect records grouped by molecule
-        mol_records: Dict[str, List[UnifiedRecord]] = {}
+        output_dir = Path(output_path)
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        # Open three LMDB environments for streaming writes
+        map_size = 1 << 40  # 1 TB
+        envs: Dict[str, lmdb.Environment] = {}
+        counters: Dict[str, int] = {"train": 0, "valid": 0, "test": 0}
+        for split in counters:
+            split_path = str(output_dir / f"{split}.lmdb")
+            Path(split_path).mkdir(parents=True, exist_ok=True)
+            envs[split] = lmdb.open(split_path, map_size=map_size)
+
+        rng = np.random.RandomState(42)
 
         with h5py.File(input_p, "r") as f:
-            mol_groups = list(f.keys())
-            logger.info("Found %d molecule groups in %s", len(mol_groups), input_path)
+            group_keys = sorted(f.keys())
+            logger.info("Found %d atom-count groups in %s", len(group_keys), input_path)
 
-            for mol_name in mol_groups:
-                mol_group = f[mol_name]
-                species = mol_group["species"][()]  # (N,) element symbols
-                coordinates = mol_group["coordinates"][()]  # (M, N, 3)
-                energies = mol_group["energies"][()]  # (M,)
-                forces = mol_group["forces"][()]  # (M, N, 3)
+            for gk in group_keys:
+                g = f[gk]
+                species_all = g["species"][()]      # (M, N) int64
+                coords_all = g["coordinates"][()]   # (M, N, 3)
+                energies_all = g["energies"][()]     # (M,)
+                forces_all = g["forces"][()]         # (M, N, 3)
 
-                # Convert species bytes to strings if needed, then to atomic numbers
-                if isinstance(species[0], bytes):
-                    species_str = [s.decode("utf-8") for s in species]
-                else:
-                    species_str = [str(s) for s in species]
+                n_conf = coords_all.shape[0]
+                num_atoms = coords_all.shape[1]
 
-                atom_types = np.array(
-                    [_SYMBOL_TO_Z.get(s, 0) for s in species_str], dtype=np.int64
-                )
-                num_atoms = len(atom_types)
+                # Random permutation for splitting within this group
+                perm = rng.permutation(n_conf)
+                n_train = int(0.8 * n_conf)
+                n_valid = int(0.1 * n_conf)
+                split_assignments = np.empty(n_conf, dtype="U5")
+                split_assignments[perm[:n_train]] = "train"
+                split_assignments[perm[n_train:n_train + n_valid]] = "valid"
+                split_assignments[perm[n_train + n_valid:]] = "test"
 
-                records: List[UnifiedRecord] = []
-                n_conformations = coordinates.shape[0]
+                # Start a transaction per split for this group
+                txns = {s: envs[s].begin(write=True) for s in envs}
 
-                for conf_idx in range(n_conformations):
-                    pos = np.array(coordinates[conf_idx], dtype=np.float64)  # (N, 3) in Angstrom
-                    energy_ev = float(energies[conf_idx]) * HARTREE_TO_EV
-                    # ANI-2x forces are in Hartree/Bohr -> convert to eV/Angstrom
-                    force_ev_a = np.array(forces[conf_idx], dtype=np.float64) * HARTREE_BOHR_TO_EV_ANGSTROM
+                for ci in range(n_conf):
+                    atom_types = np.array(species_all[ci], dtype=np.int64)
+                    pos = np.array(coords_all[ci], dtype=np.float64)
+                    energy_ev = float(energies_all[ci]) * HARTREE_TO_EV
+                    force_ev_a = np.array(forces_all[ci], dtype=np.float64) * HARTREE_BOHR_TO_EV_ANGSTROM
 
                     neighbor_list = self.compute_neighbor_list(pos, cutoff=5.0)
 
                     record: UnifiedRecord = {
-                        "atom_types": atom_types.copy(),
+                        "atom_types": atom_types,
                         "positions": pos,
                         "num_atoms": num_atoms,
                         "dataset_source": "ani2x",
-                        "system_id": f"{mol_name}_conf{conf_idx}",
+                        "system_id": f"g{gk}_c{ci}",
                         "pes_tier": "A",
                         "forces": force_ev_a,
                         "noise_target": None,
@@ -111,47 +120,29 @@ class ANI2xConverter(BaseConverter):
                         "lumo": None,
                         "neighbor_list": neighbor_list,
                     }
-                    records.append(record)
 
-                mol_records[mol_name] = records
+                    split = split_assignments[ci]
+                    key = str(counters[split]).encode()
+                    txns[split].put(key, pickle.dumps(record))
+                    counters[split] += 1
 
-        # Split by molecule to avoid leakage
-        mol_names = list(mol_records.keys())
-        rng = np.random.RandomState(42)
-        mol_indices = rng.permutation(len(mol_names))
-        n_mols = len(mol_names)
-        n_train = int(0.8 * n_mols)
-        n_valid = int(0.1 * n_mols)
+                # Commit all transactions for this group
+                for txn in txns.values():
+                    txn.commit()
 
-        splits = {
-            "train": mol_indices[:n_train],
-            "valid": mol_indices[n_train : n_train + n_valid],
-            "test": mol_indices[n_train + n_valid :],
-        }
+                logger.info(
+                    "Group %s: %d conformations (%d atoms each) processed",
+                    gk, n_conf, num_atoms,
+                )
 
-        output_dir = Path(output_path)
-        output_dir.mkdir(parents=True, exist_ok=True)
+        for env in envs.values():
+            env.close()
 
-        total_records = sum(len(recs) for recs in mol_records.values())
+        total = sum(counters.values())
         logger.info(
-            "Converted %d total conformations from %d molecules",
-            total_records,
-            n_mols,
+            "Wrote %d total records — train: %d, valid: %d, test: %d",
+            total, counters["train"], counters["valid"], counters["test"],
         )
-
-        for split_name, split_mol_indices in splits.items():
-            split_records: List[UnifiedRecord] = []
-            for mi in split_mol_indices:
-                split_records.extend(mol_records[mol_names[mi]])
-            out_path = str(output_dir / f"{split_name}.lmdb")
-            self.write_lmdb(split_records, out_path)
-            logger.info(
-                "Wrote %d %s records (%d molecules) to %s",
-                len(split_records),
-                split_name,
-                len(split_mol_indices),
-                out_path,
-            )
 
 
 def register() -> None:
