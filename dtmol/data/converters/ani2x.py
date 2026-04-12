@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import pickle
+import shutil
 from pathlib import Path
 from typing import Dict, List
 
@@ -32,9 +33,9 @@ class ANI2xConverter(BaseConverter):
       - energies: (M,) float64 in Hartree
       - forces: (M, N, 3) float64 in Hartree/Bohr
 
-    Each conformation is a distinct molecule or distinct conformation.
-    We split conformations within each group 80/10/10 to keep the split
-    balanced across atom counts.
+    Splits are by molecule (unique species tuple), not by conformation,
+    to avoid data leakage. All conformations of the same molecule type
+    are assigned to the same split.
     """
 
     def convert(
@@ -51,11 +52,14 @@ class ANI2xConverter(BaseConverter):
         output_dir.mkdir(parents=True, exist_ok=True)
 
         # Open three LMDB environments for streaming writes
+        # Clear existing data to avoid stale entries from previous runs
         map_size = 1 << 40  # 1 TB
         envs: Dict[str, lmdb.Environment] = {}
         counters: Dict[str, int] = {"train": 0, "valid": 0, "test": 0}
         for split in counters:
             split_path = str(output_dir / f"{split}.lmdb")
+            if Path(split_path).exists():
+                shutil.rmtree(split_path)
             Path(split_path).mkdir(parents=True, exist_ok=True)
             envs[split] = lmdb.open(split_path, map_size=map_size)
 
@@ -75,20 +79,39 @@ class ANI2xConverter(BaseConverter):
                 n_conf = coords_all.shape[0]
                 num_atoms = coords_all.shape[1]
 
-                # Random permutation for splitting within this group
-                perm = rng.permutation(n_conf)
-                n_train = int(0.8 * n_conf)
-                n_valid = int(0.1 * n_conf)
-                split_assignments = np.empty(n_conf, dtype="U5")
-                split_assignments[perm[:n_train]] = "train"
-                split_assignments[perm[n_train:n_train + n_valid]] = "valid"
-                split_assignments[perm[n_train + n_valid:]] = "test"
+                # Group conformations by molecule identity (species tuple)
+                mol_to_indices: Dict[tuple, List[int]] = {}
+                for ci in range(n_conf):
+                    mol_key = tuple(int(z) for z in species_all[ci])
+                    mol_to_indices.setdefault(mol_key, []).append(ci)
+
+                # Split at molecule level: shuffle unique molecules, assign 80/10/10
+                unique_mols = sorted(mol_to_indices.keys())
+                mol_perm = rng.permutation(len(unique_mols))
+                n_mol_train = max(1, int(0.8 * len(unique_mols)))
+                n_mol_valid = max(1, int(0.1 * len(unique_mols)))
+
+                mol_split: Dict[tuple, str] = {}
+                for mi in mol_perm[:n_mol_train]:
+                    mol_split[unique_mols[mi]] = "train"
+                for mi in mol_perm[n_mol_train:n_mol_train + n_mol_valid]:
+                    mol_split[unique_mols[mi]] = "valid"
+                for mi in mol_perm[n_mol_train + n_mol_valid:]:
+                    mol_split[unique_mols[mi]] = "test"
+
+                logger.info(
+                    "Group %s: %d conformations, %d unique molecules, "
+                    "split %d/%d/%d molecules to train/valid/test",
+                    gk, n_conf, len(unique_mols), n_mol_train, n_mol_valid,
+                    len(unique_mols) - n_mol_train - n_mol_valid,
+                )
 
                 # Start a transaction per split for this group
                 txns = {s: envs[s].begin(write=True) for s in envs}
 
                 for ci in range(n_conf):
                     atom_types = np.array(species_all[ci], dtype=np.int64)
+                    mol_key = tuple(int(z) for z in atom_types)
                     pos = np.array(coords_all[ci], dtype=np.float64)
                     energy_ev = float(energies_all[ci]) * HARTREE_TO_EV
                     force_ev_a = np.array(forces_all[ci], dtype=np.float64) * HARTREE_BOHR_TO_EV_ANGSTROM
@@ -121,7 +144,7 @@ class ANI2xConverter(BaseConverter):
                         "neighbor_list": neighbor_list,
                     }
 
-                    split = split_assignments[ci]
+                    split = mol_split[mol_key]
                     key = str(counters[split]).encode()
                     txns[split].put(key, pickle.dumps(record))
                     counters[split] += 1
@@ -129,11 +152,6 @@ class ANI2xConverter(BaseConverter):
                 # Commit all transactions for this group
                 for txn in txns.values():
                     txn.commit()
-
-                logger.info(
-                    "Group %s: %d conformations (%d atoms each) processed",
-                    gk, n_conf, num_atoms,
-                )
 
         for env in envs.values():
             env.close()
