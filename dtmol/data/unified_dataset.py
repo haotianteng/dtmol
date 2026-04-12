@@ -213,9 +213,11 @@ class UnifiedDataset(Dataset):  # type: ignore[type-arg]
         self._atom_mapping = _load_atom_mapping()
 
         # Open LMDB env lazily — just read keys now
-        assert os.path.isfile(lmdb_path), f"LMDB not found: {lmdb_path}"
-        env = lmdb.open(lmdb_path, subdir=False, readonly=True, lock=False,
-                        readahead=False, meminit=False, max_readers=256)
+        assert os.path.exists(lmdb_path), f"LMDB not found: {lmdb_path}"
+        self._lmdb_subdir = os.path.isdir(lmdb_path)
+        env = lmdb.open(lmdb_path, subdir=self._lmdb_subdir, readonly=True,
+                        lock=False, readahead=False, meminit=False,
+                        max_readers=256)
         with env.begin() as txn:
             self._keys = list(txn.cursor().iternext(values=False))
         env.close()
@@ -224,8 +226,8 @@ class UnifiedDataset(Dataset):  # type: ignore[type-arg]
     def _get_env(self) -> lmdb.Environment:
         if self._env is None:
             self._env = lmdb.open(
-                self.lmdb_path, subdir=False, readonly=True, lock=False,
-                readahead=False, meminit=False, max_readers=256,
+                self.lmdb_path, subdir=self._lmdb_subdir, readonly=True,
+                lock=False, readahead=False, meminit=False, max_readers=256,
             )
         return self._env
 

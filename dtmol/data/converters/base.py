@@ -187,8 +187,8 @@ class BaseConverter(abc.ABC):
             output_path: Path to output LMDB file.
             map_size: Maximum LMDB map size in bytes (default 1 TB).
         """
-        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-        env = lmdb.open(output_path, map_size=map_size, subdir=False)
+        Path(output_path).mkdir(parents=True, exist_ok=True)
+        env = lmdb.open(output_path, map_size=map_size)
         atom_counts: List[int] = []
         available_fields: set[str] = set()
 

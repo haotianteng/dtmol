@@ -20,7 +20,15 @@ CONVERTER_REGISTRY: dict[str, type[BaseConverter]] = {}
 
 def register_converter(name: str, cls: type[BaseConverter]) -> None:
     """Register a converter class under the given source name."""
+    import sys
     CONVERTER_REGISTRY[name] = cls
+    # When running as `python -m dtmol.data.convert`, the __main__ module has its
+    # own CONVERTER_REGISTRY. Sync registrations to __main__ so main() can see them.
+    main_mod = sys.modules.get("__main__")
+    if main_mod is not None and hasattr(main_mod, "CONVERTER_REGISTRY"):
+        main_registry = getattr(main_mod, "CONVERTER_REGISTRY")
+        if main_registry is not CONVERTER_REGISTRY:
+            main_registry[name] = cls
 
 
 def _import_converters() -> None:

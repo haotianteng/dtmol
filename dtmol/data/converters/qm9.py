@@ -22,27 +22,50 @@ HARTREE_TO_EV = 27.2114
 def _read_property_csv(csv_path: str) -> Dict[str, Dict[str, float]]:
     """Read QM9 property CSV and return a dict keyed by molecule index.
 
-    Expected CSV columns (gdb9 format):
-        idx, A, B, C, mu, alpha, homo, lumo, gap, r2, zpve, U0, U, H, G, Cv
+    Supports both standard QM9 column names (idx, U0, homo, lumo, mu) and
+    alternate names (mol_id, u0) via case-insensitive matching.
 
     Returns:
         dict mapping mol index (str) to property dict.
     """
+    # Map from canonical name -> list of accepted CSV column names (lowercase)
+    _COLUMN_ALIASES: Dict[str, List[str]] = {
+        "idx": ["idx", "mol_id"],
+        "mu": ["mu"],
+        "homo": ["homo"],
+        "lumo": ["lumo"],
+        "U0": ["u0"],
+    }
+
     properties: Dict[str, Dict[str, float]] = {}
     with open(csv_path, "r") as f:
         reader = csv.reader(f)
-        header = next(reader)  # skip header
+        header = [h.strip().lower() for h in next(reader)]
+
+        # Resolve column indices from header names
+        col_indices: Dict[str, int] = {}
+        for canonical, aliases in _COLUMN_ALIASES.items():
+            for alias in aliases:
+                if alias in header:
+                    col_indices[canonical] = header.index(alias)
+                    break
+            if canonical not in col_indices:
+                logger.warning("Column '%s' not found in CSV header", canonical)
+
+        idx_col = col_indices.get("idx")
+        if idx_col is None:
+            logger.error("No index column (idx/mol_id) found in CSV")
+            return properties
+
         for row in reader:
-            if len(row) < 16:
+            if len(row) <= max(col_indices.values()):
                 continue
-            idx = row[0].strip()
+            idx = row[idx_col].strip()
             try:
-                props = {
-                    "mu": float(row[4]),  # dipole moment (Debye)
-                    "homo": float(row[7]),  # HOMO (Hartree)
-                    "lumo": float(row[8]),  # LUMO (Hartree)
-                    "U0": float(row[11]),  # internal energy at 0K (Hartree)
-                }
+                props: Dict[str, float] = {}
+                for key in ("mu", "homo", "lumo", "U0"):
+                    if key in col_indices:
+                        props[key] = float(row[col_indices[key]])
                 properties[idx] = props
             except (ValueError, IndexError):
                 logger.warning("Skipping malformed CSV row for idx=%s", idx)
@@ -136,7 +159,19 @@ class QM9Converter(BaseConverter):
         input_p = Path(input_path)
 
         if input_p.is_dir():
-            records = self._convert_from_xyz_dir(input_p)
+            xyz_files = sorted(input_p.glob("*.xyz"))
+            if xyz_files:
+                records = self._convert_from_xyz_dir(input_p)
+            else:
+                # Fall back to SDF file in the directory
+                sdf_files = sorted(input_p.glob("*.sdf"))
+                if sdf_files:
+                    logger.info("No .xyz files found, using SDF: %s", sdf_files[0])
+                    records = self._convert_from_sdf(sdf_files[0])
+                else:
+                    raise ValueError(
+                        f"Directory {input_path} contains neither .xyz nor .sdf files"
+                    )
         elif input_p.suffix == ".sdf":
             records = self._convert_from_sdf(input_p)
         else:
@@ -270,9 +305,11 @@ class QM9Converter(BaseConverter):
 
             neighbor_list = self.compute_neighbor_list(coords, cutoff=5.0)
 
-            # Get properties for this molecule (1-indexed in CSV)
+            # Get properties: try both numeric key and gdb_N format
             mol_key = str(mol_idx + 1)
             props = properties.get(mol_key, {})
+            if not props:
+                props = properties.get(f"gdb_{mol_idx + 1}", {})
 
             homo = props.get("homo")
             lumo = props.get("lumo")
