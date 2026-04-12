@@ -269,6 +269,9 @@ if __name__ == "__main__":
                              "'unified' uses UnifiedDataset + DatasetMixer (default: legacy)")
     parser.add_argument("--datamix", type=str, default=None,
                         help="Path to datamix.yaml for unified dataset mode")
+    parser.add_argument("--datamix-val", type=str, default=None,
+                        help="Path to validation datamix YAML for unified mode. "
+                             "If not provided, eval_loader = train_loader.")
     parser.add_argument("--device", type=str, default="cpu",
                         help="Device to train on (default: cpu)")
     parser.add_argument("--batch-size", type=int, default=5,
@@ -364,8 +367,24 @@ if __name__ == "__main__":
             mixer, batch_size=args.batch_size, num_workers=0,
         )
 
-        # For validation, re-use the same mixer (or a separate one if desired)
-        eval_loader = train_loader
+        # Build validation loader
+        if args.datamix_val is not None:
+            val_mixer = DatasetMixer(
+                datamix_path=args.datamix_val,
+                ligand_dict=atom_dict['ligand_dict'],
+                protein_dict=atom_dict['protein_dict'],
+                config=ds_config,
+                diffusion_samplers={"molecule": molecule_sampler, "protein": protein_sampler},
+            )
+            eval_loader = get_mixed_dataloader(
+                val_mixer, batch_size=args.batch_size, num_workers=0,
+            )
+        else:
+            logging.warning(
+                "No --datamix-val provided; eval_loader = train_loader. "
+                "Consider providing a separate validation datamix YAML."
+            )
+            eval_loader = train_loader
 
         trainer = DiffusionTrainer(
             train_dataloader=train_loader,
