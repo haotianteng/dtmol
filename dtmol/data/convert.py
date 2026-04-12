@@ -92,6 +92,12 @@ def main(argv: list[str] | None = None) -> None:
         default=None,
         help="Path to PDBBind index file for merging binding affinities (MISATO).",
     )
+    parser.add_argument(
+        "--pdb-cache-dir",
+        type=str,
+        default=None,
+        help="Directory to cache downloaded PDB structures (MISATO). Defaults to <input_dir>/pdb_cache/.",
+    )
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
@@ -113,6 +119,8 @@ def main(argv: list[str] | None = None) -> None:
         extra_kwargs["no_dedup"] = True
     if args.affinity_index is not None:
         extra_kwargs["affinity_index"] = args.affinity_index
+    if args.pdb_cache_dir is not None:
+        extra_kwargs["pdb_cache_dir"] = args.pdb_cache_dir
 
     converter.convert(args.input, args.output, args.split_strategy, **extra_kwargs)
     logger.info("Done.")
