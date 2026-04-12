@@ -764,3 +764,34 @@
 - **Learnings:**
   - QM9 stores total energies (U0) converted to eV, not atomization energies — range is ~[-13000, -7000] eV for typical molecules
 ---
+
+## 2026-04-12 - US-013 - TESTER — Converter validation tests verified
+
+- Ran `python3 -m pytest dtmol/data/tests/test_converters_real.py -v`: 35/35 PASSED in 0.16s
+- All 7 datasets validated against real LMDBs: QM9, ANI-2x, SPICE2, Transition1x, PDBBind, MISATO, PDB_apo
+- Schema validation (BaseConverter.validate_record) passes for all datasets
+- Per-dataset field checks all pass: energy ranges, force magnitudes, component masks, trajectory IDs, etc.
+- mypy typecheck: Success, no issues found
+- QM9 energy range deviation from spec [-2000, 0] to [-50000, 0] is justified — total U0 energies in eV
+- Artifacts saved to ralph/test_results/US-013/attempt-1/
+- **Learnings:**
+  - All 7 converted LMDBs produce records that pass both schema validation and domain-specific checks
+  - QM9 total energies are much larger magnitude than atomization energies — spec should be updated for clarity
+---
+
+## 2026-04-12 - US-014 - IMPLEMENTOR — UnifiedDataset integration tests on all 7 real datasets
+- Created dtmol/data/tests/test_unified_dataset.py with 119 tests (112 passed, 7 expected skips)
+- 3 test classes: TestOutputStructure (11 tests x 7 datasets), TestSingleMoleculeMask (3 tests x 7 datasets), TestCollation (3 tests x 7 datasets)
+- Validates __getitem__ output dict structure: 17 required net_input keys, tensor shapes, pes_tier, holo_center_coordinates
+- Validates single_molecule_mask: True for QM9/ANI-2x/IRC/SPICE2/PDB_apo, False for PDBBind/MISATO
+- Validates collate_fn: padded batch with consistent shapes, finite distances, correct batch dimension
+- PDB apo (protein-only, component_mask all 0) handled correctly — no code fix needed, already treated as single-molecule
+- All tests skip gracefully if LMDB not found or pretrain dicts missing
+- Mypy passes with --ignore-missing-imports
+- **Environment notes for Tester:**
+  - Run: `python3 -m pytest dtmol/data/tests/test_unified_dataset.py -v`
+  - Requires real LMDB data at /data/dtMol_Project/datasets/<name>/unified/train.lmdb
+  - Requires pretrain dicts at dtmol/pretrain_models/unimol_{molecule,protein}_dict.txt
+  - 7 skips are expected (dataset-type-specific tests skip for non-matching datasets)
+  - Test runtime: ~53 seconds
+---

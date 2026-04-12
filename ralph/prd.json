@@ -390,15 +390,15 @@
         "cd /home/haotiant/Projects/CMU/dtmol && python3 -m pytest dtmol/data/tests/test_converters_real.py -v exits 0",
         "cd /home/haotiant/Projects/CMU/dtmol && python3 -m pytest dtmol/data/tests/test_converters_real.py -v output contains at least one 'PASSED'"
       ],
-      "status": "READY_FOR_TEST",
-      "passes": false,
+      "status": "TEST_PASSED",
+      "passes": true,
       "implementation_notes": "Created dtmol/data/tests/test_converters_real.py with 35 tests across 8 test classes. TestSchemaValidation: parametrized across all 7 datasets, runs BaseConverter.validate_record() on first 10 records each. Per-dataset classes: TestQM9 (energy range, homo<lumo, forces None, num_atoms 3-29, pes_tier C), TestANI2x (forces present, magnitude <50 eV/A, energy <0), TestSPICE2 (forces present, energy finite, partial_charges present), TestIRC (relative_energy >=0, timestep >=0, forces present), TestPDBBind (component_mask has both 0 and 1, num_atoms >10), TestMISATO (trajectory_id 4-char PDB ID, component_mask present, num_atoms >50), TestPDBApo (component_mask all 0, num_atoms >20). All tests skip with clear message if dataset LMDB not found. Note: QM9 energy range uses [-50000, 0] instead of spec's [-2000, 0] because QM9 stores total energies (U0 converted to eV), not atomization energies — typical range is -7000 to -13000 eV. All 35 tests pass, mypy clean.",
       "files_changed": [
         "dtmol/data/tests/test_converters_real.py"
       ],
       "failure_reason": null,
-      "test_evidence": null,
-      "test_report": null,
+      "test_evidence": "All artifacts at ralph/test_results/US-013/attempt-1/. pytest run: 35/35 PASSED in 0.16s — no skips, no failures. All 7 datasets validated: QM9 (6 tests), ANI-2x (4 tests), SPICE2 (4 tests), Transition1x/IRC (4 tests), PDBBind (3 tests), MISATO (4 tests), PDB_apo (3 tests), plus 7 parametrized schema validation tests. mypy: Success, no issues found. QM9 energy range [-50000, 0] is a reasonable deviation from spec's [-2000, 0] — QM9 stores total U0 energies in eV, not atomization energies.",
+      "test_report": "US-013 Converter Validation Tests — TEST_PASSED\n\nExecution: `python3 -m pytest dtmol/data/tests/test_converters_real.py -v`\nResult: 35 passed in 0.16s\n\nCriteria verification:\n1. File exists: dtmol/data/tests/test_converters_real.py ✓\n2. Parametrized schema validation across all 7 datasets ✓\n3. QM9: energy range (widened to [-50000,0] for total energies), homo<lumo, num_atoms 3-29 ✓\n4. ANI-2x: forces <50 eV/A, energy <0 ✓\n5. SPICE2: forces present, energy finite, partial_charges present ✓\n6. IRC: relative_energy >=0, timestep >=0, forces present ✓\n7. PDBBind: component_mask has {0,1}, num_atoms >10 ✓\n8. MISATO: trajectory_id 4-char, component_mask present, num_atoms >50 ✓\n9. PDB apo: component_mask all 0, num_atoms >20 ✓\n10. Skip logic with clear messages present in code ✓\n11. pytest exits 0 ✓\n12. mypy clean ✓",
       "fail_count": 0
     },
     {
@@ -424,10 +424,12 @@
         "cd /home/haotiant/Projects/CMU/dtmol && python3 -m pytest dtmol/data/tests/test_unified_dataset.py -v exits 0",
         "cd /home/haotiant/Projects/CMU/dtmol && python3 -m pytest dtmol/data/tests/test_unified_dataset.py -v output contains at least one 'PASSED'"
       ],
-      "status": "REQUIRE_IMPLEMENT",
+      "status": "READY_FOR_TEST",
       "passes": false,
-      "implementation_notes": null,
-      "files_changed": [],
+      "implementation_notes": "Created dtmol/data/tests/test_unified_dataset.py with 119 tests (112 passed, 7 expected skips) across 3 test classes. TestOutputStructure: 11 parametrized tests across all 7 datasets verifying top-level keys, net_input keys (17 required keys), tensor shapes (mol_tokens, mol_distance, mol_displacement, mol_coord, pocket shapes, cross shapes), pes_tier validity, holo_center_coordinates finiteness, and distance/edge-type finiteness. TestSingleMoleculeMask: 3 tests — verifies single_molecule_mask is True for molecule-only (QM9, ANI-2x, IRC, SPICE2) and protein-only (PDB_apo), False for protein-ligand (PDBBind, MISATO); verifies real pocket (>=3 tokens) for protein-ligand datasets; verifies dummy pocket (1 token) for single-molecule datasets. TestCollation: 3 tests — collate_fn([ds[0], ds[1]]) produces valid batch with correct shapes, batch dimension 2, consistent 2D/3D tensor shapes, finite distances. PDB apo protein-only case works correctly (no crash, treated as single-molecule with all atoms as ligand). All tests skip with clear message if LMDB not found or pretrain dicts missing. Mypy passes.",
+      "files_changed": [
+        "dtmol/data/tests/test_unified_dataset.py"
+      ],
       "failure_reason": null,
       "test_evidence": null,
       "test_report": null,
