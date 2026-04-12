@@ -1,30 +1,36 @@
-"""MISATO converter: converts MISATO MD trajectory HDF5 to unified LMDB format."""
+"""MISATO converter: converts MISATO QM HDF5 to unified LMDB format.
+
+MISATO QM HDF5 structure (per PDB group):
+  - atom_properties/atom_names: (N,) strings of atomic numbers (e.g. b'7' = nitrogen)
+  - atom_properties/atom_properties_values: (N, 28) float32
+      columns 0-2: x, y, z coordinates in Angstrom
+      columns 3+: hybridisation, group, various charge/polarisation properties
+  - atom_properties/bonds: (B, 3) bond info
+  - mol_properties/: scalar molecular properties (Electron_Affinity, Ionization_Potential, etc.)
+
+Each group is a protein-ligand complex identified by a 4-char PDB ID.
+The QM data contains ligand atoms only (no protein, no water, single snapshot).
+"""
 
 from __future__ import annotations
 
 import logging
+import pickle
+import shutil
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set
 
 import h5py
+import lmdb
 import numpy as np
 
 from dtmol.data.converters.base import BaseConverter, UnifiedRecord
 
 logger = logging.getLogger(__name__)
 
-# Atom type index -> element symbol mapping for MISATO
-# MISATO uses integer atom type indices; the mapping depends on the specific
-# encoding. Common protein+ligand atom types: H, C, N, O, S, P, F, Cl, Br, I
-# We use periodic table atomic numbers directly when available.
-# MISATO atoms_type stores atomic numbers directly.
-
 
 def _load_dedup_list(dedup_path: str) -> Set[str]:
-    """Load a list of PDB IDs to skip (for deduplication with PDBBind).
-
-    The file should contain one PDB ID per line (case-insensitive).
-    """
+    """Load a list of PDB IDs to skip (for deduplication with PDBBind)."""
     pdb_ids: Set[str] = set()
     with open(dedup_path) as f:
         for line in f:
@@ -36,12 +42,7 @@ def _load_dedup_list(dedup_path: str) -> Set[str]:
 
 
 def _load_binding_affinities(index_path: str) -> Dict[str, float]:
-    """Load binding affinities from a PDBBind-style index file.
-
-    Expected format: lines with PDB ID and -logKd/Ki value, e.g.:
-        1a07  3.00  ...
-    Skips comment lines starting with '#'.
-    """
+    """Load binding affinities from a PDBBind-style index file."""
     affinities: Dict[str, float] = {}
     with open(index_path) as f:
         for line in f:
@@ -60,50 +61,18 @@ def _load_binding_affinities(index_path: str) -> Dict[str, float]:
     return affinities
 
 
-def _identify_components(
-    atoms_residue: np.ndarray,
-) -> Optional[Tuple[np.ndarray, np.ndarray]]:
-    """Build component_mask from atoms_residue metadata.
-
-    Protein residues are standard amino acid residue names.
-    Ligand atoms have residue names like 'LIG', 'UNL', 'UNK', or non-standard names.
-    Water atoms ('HOH', 'WAT', 'TIP3') are excluded (returns indices to keep).
-
-    Returns:
-        component_mask: (N,) array with 0=protein, 1=ligand for non-water atoms,
-        or None if classification fails.
-    """
-    # Standard amino acid 3-letter codes
-    PROTEIN_RESIDUES = {
-        "ALA", "ARG", "ASN", "ASP", "CYS", "GLN", "GLU", "GLY", "HIS", "ILE",
-        "LEU", "LYS", "MET", "PHE", "PRO", "SER", "THR", "TRP", "TYR", "VAL",
-        # Common non-standard/modified
-        "HIE", "HID", "HIP", "CYX", "ASH", "GLH",
-    }
-    WATER_RESIDUES = {"HOH", "WAT", "TIP3", "TIP", "SOL"}
-
-    n = len(atoms_residue)
-    mask = np.zeros(n, dtype=np.int64)
-    keep = np.ones(n, dtype=bool)
-
-    for i in range(n):
-        res = atoms_residue[i]
-        if isinstance(res, bytes):
-            res = res.decode("utf-8")
-        res = str(res).strip().upper()
-
-        if res in WATER_RESIDUES:
-            keep[i] = False
-        elif res in PROTEIN_RESIDUES:
-            mask[i] = 0  # protein
-        else:
-            mask[i] = 1  # ligand
-
-    return mask[keep], keep
+# Indices into atom_properties_values columns (from atom_properties_names)
+_COL_X, _COL_Y, _COL_Z = 0, 1, 2
+_COL_GFN2_CHARGE = 5  # 'gfn2_charge'
 
 
 class MISATOConverter(BaseConverter):
-    """Converter for MISATO MD trajectory HDF5 to unified format."""
+    """Converter for MISATO QM HDF5 to unified format.
+
+    Each HDF5 group is a PDB ID containing QM-computed properties for the
+    ligand extracted from that protein-ligand complex. Creates one
+    UnifiedRecord per complex.
+    """
 
     def convert(
         self,
@@ -113,23 +82,7 @@ class MISATOConverter(BaseConverter):
         dedup_list: Optional[str] = None,
         no_dedup: bool = False,
         affinity_index: Optional[str] = None,
-        dt: float = 0.08,
     ) -> None:
-        """Convert MISATO HDF5 to unified LMDB format.
-
-        Each HDF5 group represents a protein-ligand complex with trajectory frames.
-        Creates one UnifiedRecord per frame.
-
-        Args:
-            input_path: Path to the MISATO HDF5 file.
-            output_path: Directory where output unified LMDB files are written.
-            split_strategy: 'random' splits by PDB ID (default).
-            dedup_list: Path to file with PDB IDs to skip (for PDBBind dedup).
-            no_dedup: If True, disable deduplication even if dedup_list given.
-            affinity_index: Path to PDBBind index file for binding affinities.
-            dt: Trajectory timestep in nanoseconds (default 0.08 ns = 80 ps for
-                MISATO 100 frames over 8 ns).
-        """
         input_p = Path(input_path)
         if not input_p.exists():
             raise FileNotFoundError(f"Input file not found: {input_path}")
@@ -144,157 +97,171 @@ class MISATOConverter(BaseConverter):
         if affinity_index:
             affinities = _load_binding_affinities(affinity_index)
 
-        # Collect records grouped by PDB ID (for splitting)
-        pdb_records: Dict[str, List[UnifiedRecord]] = {}
-
-        with h5py.File(input_p, "r") as f:
-            pdb_groups = list(f.keys())
-            logger.info("Found %d PDB groups in %s", len(pdb_groups), input_path)
-
-            for pdb_id in pdb_groups:
-                pdb_id_lower = pdb_id.strip().lower()
-
-                # Deduplication check
-                if pdb_id_lower in dedup_ids:
-                    logger.debug("Skipping %s (in dedup list)", pdb_id)
-                    continue
-
-                pdb_group = f[pdb_id]
-
-                # Trajectory coordinates: (T, N, 3) in Angstrom
-                if "trajectory_coordinates" not in pdb_group:
-                    logger.warning("Skipping %s: no trajectory_coordinates", pdb_id)
-                    continue
-                traj_coords = pdb_group["trajectory_coordinates"][()]  # (T, N, 3)
-
-                # Atom types: (N,) atomic numbers
-                if "atoms_type" not in pdb_group:
-                    logger.warning("Skipping %s: no atoms_type", pdb_id)
-                    continue
-                atoms_type_raw = pdb_group["atoms_type"][()]
-
-                # Atom residues for component classification
-                if "atoms_residue" not in pdb_group:
-                    logger.warning("Skipping %s: no atoms_residue", pdb_id)
-                    continue
-                atoms_residue = pdb_group["atoms_residue"][()]
-
-                # Identify protein/ligand components and strip water
-                result = _identify_components(atoms_residue)
-                if result is None:
-                    logger.warning("Skipping %s: could not classify components", pdb_id)
-                    continue
-                component_mask, keep_mask = result
-
-                # Apply water stripping
-                atom_types = np.array(atoms_type_raw[keep_mask], dtype=np.int64)
-                num_atoms = len(atom_types)
-
-                if num_atoms == 0:
-                    logger.warning("Skipping %s: no atoms after water stripping", pdb_id)
-                    continue
-
-                # Binding affinity
-                binding_affinity: Optional[float] = affinities.get(pdb_id_lower)
-
-                n_frames = traj_coords.shape[0]
-                records: List[UnifiedRecord] = []
-
-                for frame_idx in range(n_frames):
-                    # Strip water from coordinates
-                    pos = np.array(traj_coords[frame_idx][keep_mask], dtype=np.float64)
-
-                    # Previous and next frame positions (for finite-difference forces)
-                    positions_prev: Optional[np.ndarray] = None
-                    positions_next: Optional[np.ndarray] = None
-                    forces: Optional[np.ndarray] = None
-
-                    if frame_idx > 0:
-                        positions_prev = np.array(
-                            traj_coords[frame_idx - 1][keep_mask], dtype=np.float64
-                        )
-
-                    if frame_idx < n_frames - 1:
-                        positions_next = np.array(
-                            traj_coords[frame_idx + 1][keep_mask], dtype=np.float64
-                        )
-                        # Finite-difference force approximation: F ~ (x_{t+1} - x_t) / dt
-                        # dt in ns, positions in Angstrom -> forces in A/ns
-                        # This is a displacement-based proxy, not a true force in eV/A
-                        forces = (
-                            np.array(traj_coords[frame_idx + 1][keep_mask], dtype=np.float64)
-                            - pos
-                        ) / dt
-
-                    neighbor_list = self.compute_neighbor_list(pos, cutoff=5.0)
-
-                    record: UnifiedRecord = {
-                        "atom_types": atom_types.copy(),
-                        "positions": pos,
-                        "num_atoms": num_atoms,
-                        "dataset_source": "misato",
-                        "system_id": f"{pdb_id}_frame{frame_idx}",
-                        "pes_tier": "B",
-                        "forces": forces,
-                        "noise_target": None,
-                        "noise_level": None,
-                        "energy": None,
-                        "binding_affinity": binding_affinity,
-                        "relative_energy": None,
-                        "trajectory_id": pdb_id,
-                        "timestep": frame_idx,
-                        "positions_prev": positions_prev,
-                        "positions_next": positions_next,
-                        "component_mask": component_mask.copy(),
-                        "pocket_mask": None,
-                        "partial_charges": None,
-                        "dipole": None,
-                        "homo": None,
-                        "lumo": None,
-                        "neighbor_list": neighbor_list,
-                    }
-                    records.append(record)
-
-                pdb_records[pdb_id] = records
-
-        # Split by PDB ID to avoid leakage
-        pdb_ids = list(pdb_records.keys())
-        rng = np.random.RandomState(42)
-        pdb_indices = rng.permutation(len(pdb_ids))
-        n_pdbs = len(pdb_ids)
-        n_train = int(0.8 * n_pdbs)
-        n_valid = int(0.1 * n_pdbs)
-
-        splits = {
-            "train": pdb_indices[:n_train],
-            "valid": pdb_indices[n_train : n_train + n_valid],
-            "test": pdb_indices[n_train + n_valid :],
-        }
-
         output_dir = Path(output_path)
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        total_records = sum(len(recs) for recs in pdb_records.values())
-        logger.info(
-            "Converted %d total frames from %d complexes (skipped %d for dedup)",
-            total_records,
-            n_pdbs,
-            len(dedup_ids),
-        )
+        # Open three LMDB environments for streaming writes
+        map_size = 1 << 40  # 1 TB
+        envs: Dict[str, lmdb.Environment] = {}
+        counters: Dict[str, int] = {"train": 0, "valid": 0, "test": 0}
+        for split in counters:
+            split_path = str(output_dir / f"{split}.lmdb")
+            if Path(split_path).exists():
+                shutil.rmtree(split_path)
+            Path(split_path).mkdir(parents=True, exist_ok=True)
+            envs[split] = lmdb.open(split_path, map_size=map_size)
 
-        for split_name, split_pdb_indices in splits.items():
-            split_records: List[UnifiedRecord] = []
-            for pi in split_pdb_indices:
-                split_records.extend(pdb_records[pdb_ids[pi]])
-            out_path = str(output_dir / f"{split_name}.lmdb")
-            self.write_lmdb(split_records, out_path)
-            logger.info(
-                "Wrote %d %s records (%d complexes) to %s",
-                len(split_records),
-                split_name,
-                len(split_pdb_indices),
-                out_path,
-            )
+        rng = np.random.RandomState(42)
+        skipped_dedup = 0
+        skipped_error = 0
+
+        with h5py.File(input_p, "r") as f:
+            pdb_groups = sorted(f.keys())
+            n_pdbs = len(pdb_groups)
+            logger.info("Found %d PDB groups in %s", n_pdbs, input_path)
+
+            # Filter out dedup IDs
+            valid_groups: List[str] = []
+            for pdb_id in pdb_groups:
+                if pdb_id.strip().lower() in dedup_ids:
+                    skipped_dedup += 1
+                    continue
+                valid_groups.append(pdb_id)
+
+            # Assign PDB-level splits: 80/10/10
+            n_valid_pdbs = len(valid_groups)
+            perm = rng.permutation(n_valid_pdbs)
+            n_train = int(0.8 * n_valid_pdbs)
+            n_valid = int(0.1 * n_valid_pdbs)
+
+            pdb_split: Dict[int, str] = {}
+            for pi in perm[:n_train]:
+                pdb_split[pi] = "train"
+            for pi in perm[n_train:n_train + n_valid]:
+                pdb_split[pi] = "valid"
+            for pi in perm[n_train + n_valid:]:
+                pdb_split[pi] = "test"
+
+            for pdb_idx, pdb_id in enumerate(valid_groups):
+                pdb_group = f[pdb_id]
+
+                # Validate required fields
+                if "atom_properties" not in pdb_group:
+                    logger.warning("Skipping %s: no atom_properties", pdb_id)
+                    skipped_error += 1
+                    continue
+
+                atom_props = pdb_group["atom_properties"]
+                if "atom_names" not in atom_props or "atom_properties_values" not in atom_props:
+                    logger.warning("Skipping %s: missing atom_names or atom_properties_values", pdb_id)
+                    skipped_error += 1
+                    continue
+
+                # atom_names are atomic numbers stored as byte strings
+                atom_names_raw = atom_props["atom_names"][()]  # (N,) bytes
+                try:
+                    atom_types = np.array(
+                        [int(name.decode() if isinstance(name, bytes) else str(name))
+                         for name in atom_names_raw],
+                        dtype=np.int64,
+                    )
+                except (ValueError, UnicodeDecodeError) as e:
+                    logger.warning("Skipping %s: cannot parse atom_names: %s", pdb_id, e)
+                    skipped_error += 1
+                    continue
+
+                num_atoms = len(atom_types)
+                if num_atoms == 0:
+                    logger.warning("Skipping %s: no atoms", pdb_id)
+                    skipped_error += 1
+                    continue
+
+                # Coordinates from first 3 columns of atom_properties_values
+                prop_values = atom_props["atom_properties_values"][()]  # (N, 28)
+                positions = np.array(
+                    prop_values[:, _COL_X:_COL_Z + 1], dtype=np.float64
+                )  # (N, 3)
+
+                # GFN2 partial charges
+                partial_charges: Optional[np.ndarray] = None
+                if prop_values.shape[1] > _COL_GFN2_CHARGE:
+                    partial_charges = np.array(
+                        prop_values[:, _COL_GFN2_CHARGE], dtype=np.float64
+                    )
+
+                # Component mask: all ligand (1) since QM data is ligand-only
+                component_mask = np.ones(num_atoms, dtype=np.int64)
+
+                # Binding affinity from external index
+                pdb_id_lower = pdb_id.strip().lower()
+                binding_affinity: Optional[float] = affinities.get(pdb_id_lower)
+
+                # Molecular properties
+                energy: Optional[float] = None
+                homo: Optional[float] = None
+                lumo: Optional[float] = None
+                if "mol_properties" in pdb_group:
+                    mol_props = pdb_group["mol_properties"]
+                    # Ionization potential and electron affinity can serve as
+                    # HOMO/LUMO proxies via Koopman's theorem
+                    if "Ionization_Potential" in mol_props:
+                        # IP ~ -HOMO (in eV)
+                        homo = -float(mol_props["Ionization_Potential"][()])
+                    if "Electron_Affinity" in mol_props:
+                        # EA ~ -LUMO (in eV)
+                        lumo = -float(mol_props["Electron_Affinity"][()])
+
+                neighbor_list = self.compute_neighbor_list(positions, cutoff=5.0)
+
+                record: UnifiedRecord = {
+                    "atom_types": atom_types,
+                    "positions": positions,
+                    "num_atoms": num_atoms,
+                    "dataset_source": "misato",
+                    "system_id": pdb_id,
+                    "pes_tier": "B",
+                    "forces": None,
+                    "noise_target": None,
+                    "noise_level": None,
+                    "energy": energy,
+                    "binding_affinity": binding_affinity,
+                    "relative_energy": None,
+                    "trajectory_id": pdb_id,
+                    "timestep": None,
+                    "positions_prev": None,
+                    "positions_next": None,
+                    "component_mask": component_mask,
+                    "pocket_mask": None,
+                    "partial_charges": partial_charges,
+                    "dipole": None,
+                    "homo": homo,
+                    "lumo": lumo,
+                    "neighbor_list": neighbor_list,
+                }
+
+                split = pdb_split[pdb_idx]
+                txn = envs[split].begin(write=True)
+                txn.put(str(counters[split]).encode(), pickle.dumps(record))
+                counters[split] += 1
+                txn.commit()
+
+                if (pdb_idx + 1) % 2000 == 0:
+                    logger.info(
+                        "Processed %d/%d complexes (train=%d, valid=%d, test=%d)",
+                        pdb_idx + 1, n_valid_pdbs,
+                        counters["train"], counters["valid"], counters["test"],
+                    )
+
+        for env in envs.values():
+            env.close()
+
+        total = sum(counters.values())
+        logger.info(
+            "Wrote %d total records — train: %d, valid: %d, test: %d "
+            "(skipped %d dedup, %d errors)",
+            total, counters["train"], counters["valid"], counters["test"],
+            skipped_dedup, skipped_error,
+        )
 
 
 def register() -> None:
