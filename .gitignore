@@ -11,3 +11,14 @@ test*.py
 # Reference papers
 refs/
 
+# wandb log
+wandb/
+
+# model files
+models/
+
+# log
+.vscode/
+Interactive*
+
+

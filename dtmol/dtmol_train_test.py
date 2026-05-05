@@ -61,7 +61,8 @@ class DiffusionTrainer(Trainer):
         self.nets['protein_encoder'].load_state_dict(protein_model_dict["model"], strict=False)
 
     def train(self, epoches: int, optimizer, save_every_n_steps: int = 100,
-              valid_every_n_steps: int = 100, save_folder: str = None):
+              valid_every_n_steps: int = 100, save_folder: str = None,
+              param_norm_every_n_steps: int = 100):
         self.save_folder = save_folder
         self._save_config()
         for epoch_i in range(epoches):
@@ -72,6 +73,12 @@ class DiffusionTrainer(Trainer):
                     continue
                 optimizer.zero_grad()
                 loss.backward()
+                # Snapshot parameter and gradient norms BEFORE optimizer.step
+                # so the wandb panel reflects the state that produced the
+                # current gradients (early warning for weight blow-up).
+                pn_metrics = None
+                if (self.use_wandb and i_step % param_norm_every_n_steps == 0):
+                    pn_metrics = self._param_norm_metrics(include_grads=True)
                 optimizer.step()
                 if i_step % save_every_n_steps == 0:
                     self.save()
@@ -92,7 +99,15 @@ class DiffusionTrainer(Trainer):
                                 "valid_diffusion_loss": valid_loss_dict['diffusion_loss'],
                                 "valid_force_loss": valid_loss_dict['force_loss'],
                             }
+                            if pn_metrics is not None:
+                                log_dict.update(pn_metrics)
                             wandb.log(log_dict)
+                elif pn_metrics is not None:
+                    # Param-norm cadence may be tighter than valid cadence;
+                    # log on its own when there's no valid step this iter.
+                    pn_metrics["epoch"] = epoch_i
+                    pn_metrics["global_step"] = self.global_step
+                    wandb.log(pn_metrics)
 
     def _call_decoder(self, batch, mole_input, pocket_input, mole_embd, pocket_embd,
                       mole_padding, pocket_padding, mole_attn, pocket_attn):
@@ -282,7 +297,7 @@ def build_encoder(pretrain_f):
     protein_dict = Dictionary.load(f"{pretrain_f}/unimol_protein_dict.txt")
     ligand_dict.add_symbol("[MASK]", is_special=True)
     protein_dict.add_symbol("[MASK]", is_special=True)
-    encoder_config = DummyModelConfig("encode")
+    encoder_config = DummyModelConfig(mode="encode")
     ligand_encoder = UniMolEncoder(args = encoder_config, dictionary=ligand_dict)
     protein_encoder = UniMolEncoder(args = encoder_config, dictionary=protein_dict)
     return {"ligand_encoder": ligand_encoder, "protein_encoder": protein_encoder}, {"ligand_dict": ligand_dict, "protein_dict": protein_dict}
@@ -331,12 +346,12 @@ if __name__ == "__main__":
     os.makedirs(model_folder, exist_ok=True)
 
     ##% Load the pretrained encoder
-    pretrain_f = os.path.join(package_path, "dtmol/models/pretrain")
+    pretrain_f = os.path.join(package_path, "dtmol/pretrain_models")
     nets, atom_dict = build_encoder(pretrain_f)
 
     ##% Load the decoder
     print("Loading the decoder")
-    decoder_config = DummyModelConfig("train")
+    decoder_config = DummyModelConfig(mode="train")
     decoder = Decoder(decoder_config, atom_dict['ligand_dict'])
     decoder.register_diffusion_pool_head("tr-rotation", 6)
     decoder.register_diffusion_head("perturbation", 3)
@@ -374,10 +389,10 @@ if __name__ == "__main__":
         ll_sch_rot = LogLinearScheduler(T, sigma_min=0.1, sigma_max=1.65)
         ll_sch_pert = LogLinearScheduler(T, sigma_min=0.04, sigma_max=1.5)
         ll_sch_pert2 = LogLinearScheduler(T, sigma_min=0.04, sigma_max=1.5)
-        rot_sampler = RotationSampler(schedular=ll_sch_rot, sde_format="ve")
-        tr_sampler = TranslationSampler(schedular=ll_sch_tr, sde_format="ve")
-        g_sampler = GaussianSampler(schedular=ll_sch_pert, sde_format="ve")
-        g_sampler2 = GaussianSampler(schedular=ll_sch_pert2, sde_format="ve")
+        rot_sampler = RotationSampler(schedular=ll_sch_rot, sde_format="VE")
+        tr_sampler = TranslationSampler(schedular=ll_sch_tr, sde_format="VE")
+        g_sampler = GaussianSampler(schedular=ll_sch_pert, sde_format="VE")
+        g_sampler2 = GaussianSampler(schedular=ll_sch_pert2, sde_format="VE")
         molecule_sampler = ChainSampler(rot_sampler).compose(tr_sampler).compose(g_sampler)
         protein_sampler = ChainSampler(g_sampler2)
         protein_sampler.conjugate(molecule_sampler)

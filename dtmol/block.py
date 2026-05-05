@@ -9,7 +9,7 @@ from dtmol.utils.base import get_activation_fn
 from dtmol.utils.attention import SelfMultiheadAttention
 from e3nn import o3
 from e3nn.o3 import FullyConnectedTensorProduct
-from e3nn.nn import FullyConnectedNet, Gate
+from e3nn.nn import FullyConnectedNet, Gate, BatchNorm as E3BatchNorm
 
 
 @torch.jit.script
@@ -299,6 +299,7 @@ class DiTLayer(nn.Module):
             attn_bias: torch.Tensor, the attention bias tensor with shape [B, N, N].
         """
         shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.adaLN_modulation(t).chunk(6, dim=1)
+        residual = x
         x = modulate(self.norm1(x), shift_msa, scale_msa)
         x = self.self_attn(
             query=x,
@@ -316,7 +317,7 @@ class DiTLayer(nn.Module):
             else:
                 attn_weights_disp = attn_weights
                 attn_prob_disp = attn_probs
-        x = x + gate_msa.unsqueeze(1) * x
+        x = residual + gate_msa.unsqueeze(1) * x
         x = x + gate_mlp.unsqueeze(1) * self.mlp(modulate(self.norm2(x), shift_mlp, scale_mlp))
     
         if not return_attn:
@@ -398,16 +399,20 @@ class SE3ELayer(nn.Module):
 
         #e3nn layer
         assert heads % 16 == 0, "The number of heads must be divisible by 16."
-        multiplier = heads // 16 
+        multiplier = heads // 16
         self.irreps_sh = o3.Irreps.spherical_harmonics(max_l) #irreductible representation of spherical harmonics
         if irreps_in is None:
             irreps_in = self.irreps_sh
+        # Bounded Gate activations matching e3nn's reference (silu/tanh for
+        # scalars, sigmoid/tanh for gates). The previous relu/abs let scalar
+        # magnitudes grow without bound, which compounds catastrophically
+        # over a 14-layer SE3 stack (60 -> 1e30 in the trace).
         self.gate = Gate(
             f"{multiplier*2}x0e + {multiplier*2}x0o",
-            [torch.relu, torch.abs],  # scalar
-            f"{multiplier}x0e + {multiplier}x0o + {multiplier}x0e + {multiplier}x0o", 
-            [torch.relu, torch.tanh, torch.relu, torch.tanh],  # gates (scalars)
-            f"{multiplier*2}x1o + {multiplier*2}x1e",  
+            [F.silu, torch.tanh],  # scalar (0e:silu, 0o:tanh)
+            f"{multiplier}x0e + {multiplier}x0o + {multiplier}x0e + {multiplier}x0o",
+            [torch.sigmoid, torch.tanh, torch.sigmoid, torch.tanh],  # gates (0e:sigmoid, 0o:tanh)
+            f"{multiplier*2}x1o + {multiplier*2}x1e",
         )
         self.irrpes_inter = self.gate.irreps_in
         if irreps_out is None:
@@ -416,6 +421,18 @@ class SE3ELayer(nn.Module):
         self.irreps_out = irreps_out
         self.conv1 = GlobalConv(self.irreps_in, self.irreps_sh, self.irrpes_inter, heads)
         self.conv2 = GlobalConv(self.gate.irreps_out, self.irreps_sh, self.irreps_out, heads)
+
+        # Equivariant per-irrep-block normalization (DiffDock-style). Divides
+        # each irrep multiplicity by its scalar variance, which is a
+        # rotation invariant for orthonormal Wigner-D representations -- so
+        # equivariance is preserved. Required because the SE3 stack has no
+        # other normalization between its 14 layers.
+        self.batch_norm = E3BatchNorm(self.irreps_out)
+
+        # Residual is enabled when input/output irreps match (every layer
+        # except the first, which has irreps_in == irreps_sh while
+        # irreps_out == "mx1o + mx1e"). Matches DiffDock's TP conv pattern.
+        self.use_residual = (o3.Irreps(self.irreps_in) == o3.Irreps(self.irreps_out))
 
         if update_distance_matrix:
             self.dist_update_proj = nn.Linear(heads, heads, bias=False)
@@ -448,9 +465,19 @@ class SE3ELayer(nn.Module):
             edge_features = o3.spherical_harmonics(l=self.irreps_sh, x=displacement_tensor, normalize=True, normalization="component") # [bsz, seq_len, seq_len, (self.max_l+1)**2]
         if node_features is None:
             node_features = torch.sum(edge_features, dim=1)/normalizer
+        # Save residual when in/out irreps match. Captured before conv1 so
+        # the residual stream skips the (conv1, gate, conv2, batch_norm)
+        # block entirely, matching DiffDock's TensorProductConvLayer.
+        residual = node_features if self.use_residual else None
         node_features = self.conv1(node_features, edge_features, attn_disp, normalizer)
         node_features = self.gate(node_features)
         node_features = self.conv2(node_features, edge_features, attn_disp, normalizer)
+        # Equivariant per-irrep-block normalization keeps magnitudes bounded
+        # across the 14-layer stack. e3nn.nn.BatchNorm expects [batch, ..., dim]
+        # which matches our [B, N, irreps_dim].
+        node_features = self.batch_norm(node_features)
+        if residual is not None:
+            node_features = node_features + residual
         if self.update_distance_matrix:
             #TODO update coordinates according to node features
             raise NotImplementedError("Coordinates update hasn't been implmeneted yet.")
@@ -619,6 +646,7 @@ class TransformerDecoderWithPair(nn.Module):
         max_time: int = 5000,
         post_ln: bool = False,
         no_final_head_layer_norm: bool = False,
+        sanitize_nonfinite: bool = False,
     ) -> None:
 
         super().__init__()
@@ -629,6 +657,10 @@ class TransformerDecoderWithPair(nn.Module):
         self.attention_heads = attention_heads
         self.use_cross_product_update = use_cross_product_update
         self.update_distance_matrix = update_distance_matrix
+        # When True, replace NaN/Inf in node_features and x at the end of the
+        # SE3 stack with 0 to keep training going. Off by default so the raw
+        # numerical failure surfaces during root-causing.
+        self.sanitize_nonfinite = sanitize_nonfinite
         multiplier = attention_heads // divisor
         num_odd_vec,num_even_vec = multiplier,multiplier
         irreps_out = [f"{num_odd_vec}x1o + {num_even_vec}x1e"]*encoder_layers
@@ -730,7 +762,20 @@ class TransformerDecoderWithPair(nn.Module):
             return attn_mask, padding_mask
         assert attn_mask is not None
         attn_mask, padding_mask = fill_attn_mask(attn_mask, padding_mask)
-        # coordinates = coordinates.repeat(self.attention_heads, 1, 1).view(self.attention_heads, bsz, seq_len, d).transpose(0,1).contiguous() # [bsz, head, seq_len, d]
+
+        # Prevent NaN from softmax on all-(-inf) rows (e.g. dummy protein
+        # tokens that are both padding-masked and cross-attention-masked).
+        # Set diagonal to 0 for such rows so they self-attend harmlessly.
+        _am = attn_mask.view(bsz, -1, seq_len, seq_len)
+        _all_inf = torch.isinf(_am) & (_am < 0)                       # [B, H, N, N]
+        _row_all_inf = _all_inf.all(dim=-1)                            # [B, H, N]
+        if _row_all_inf.any():
+            _diag_idx = torch.arange(seq_len, device=_am.device)
+            _am[:, :, _diag_idx, _diag_idx] = torch.where(
+                _row_all_inf, torch.zeros_like(_am[:, :, _diag_idx, _diag_idx]),
+                _am[:, :, _diag_idx, _diag_idx])
+            attn_mask = _am.view(-1, seq_len, seq_len)
+
         for i in range(len(self.layers)):
             x, attn_mask,attn_prob,attn_disp,attn_disp_prob = self.layers[i](
                 x,t, padding_mask=padding_mask, attn_bias=attn_mask, return_attn=True
@@ -748,6 +793,16 @@ class TransformerDecoderWithPair(nn.Module):
         node_features = node_features.reshape(bsz, seq_len, -1, 3).permute(0,2,1,3).contiguous() # [bsz, head, seq_len, 3]
 
         x = self.final_layer(x, t) # [bsz, seq_len, embed_dim]
+
+        # Optional safety net: deep SE3 stacks can drive node_features to
+        # Inf at degenerate placeholder positions (BOS/EOS, dummy-protein
+        # where coordinates are inf or coincide). When enabled, replace
+        # non-finite entries with 0 so the diffusion heads receive clean
+        # inputs and gradients aren't poisoned via NaN*0. Off by default so
+        # the raw failure is visible for root-causing.
+        if self.sanitize_nonfinite:
+            node_features = torch.nan_to_num(node_features, nan=0.0, posinf=0.0, neginf=0.0)
+            x = torch.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0)
 
         def norm_loss(x, eps=1e-10, tolerance=1.0):
             x = x.float()

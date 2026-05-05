@@ -111,8 +111,108 @@ class Trainer(object):
             self.logger.log(dict)
         self.logger.info(dict)
 
+    @staticmethod
+    def _group_key(net_name: str, param_name: str) -> str:
+        """Bucket a parameter into a coarse group for wandb dashboards.
+
+        Examples (decoder.* paths):
+            "decoder.layers.7.self_attn.in_proj.weight" -> "decoder.layers"
+            "decoder.se3_equiv_layers.3.conv1.tp.weight" -> "decoder.se3_equiv_layers"
+            "decoder.se3_equiv_layers.3.batch_norm.weight" -> "decoder.se3_batchnorm"
+            "decoder.diffusion_heads.tr-rotation.linear1.weight" -> "decoder.diffusion_heads"
+            "decoder.gbf.means.weight" -> "decoder.other"
+        """
+        parts = param_name.split(".")
+        if net_name != "decoder":
+            return net_name
+        if len(parts) >= 1 and parts[0] == "layers":
+            return "decoder.layers"
+        if len(parts) >= 2 and parts[0] == "se3_equiv_layers":
+            if len(parts) >= 3 and parts[2] == "batch_norm":
+                return "decoder.se3_batchnorm"
+            return "decoder.se3_equiv_layers"
+        if len(parts) >= 1 and parts[0] == "diffusion_heads":
+            return "decoder.diffusion_heads"
+        if len(parts) >= 1 and parts[0] == "decoder":
+            # nested decoder.decoder.* (TransformerDecoderWithPair internals)
+            return Trainer._group_key("decoder", ".".join(parts[1:]))
+        return "decoder.other"
+
+    def _param_norm_metrics(self, include_grads: bool = True) -> Dict[str, float]:
+        """Collect parameter (and optionally gradient) L2 norms grouped by
+        coarse module bucket. Returned dict is suitable for ``wandb.log``.
+
+        Per group reported:
+            param_norm/<group>           sqrt(sum w**2)  over all params in group
+            param_absmax/<group>         max |w|
+            grad_norm/<group>            sqrt(sum g**2)  (if include_grads)
+            grad_absmax/<group>          max |g|         (if include_grads)
+        Plus aggregates ``param_norm/total`` and ``grad_norm/total``.
+        Non-finite values are reported as 'nan' so they show up in dashboards
+        instead of silently breaking the log call.
+        """
+        if self.distributed:
+            nets_dict = self.nets.module
+        else:
+            nets_dict = self.nets
+        if isinstance(nets_dict, dict):
+            nets_iter = list(nets_dict.items())
+        else:
+            nets_iter = [("model", nets_dict)]
+
+        param_sq: Dict[str, float] = {}
+        param_max: Dict[str, float] = {}
+        grad_sq: Dict[str, float] = {}
+        grad_max: Dict[str, float] = {}
+        with torch.no_grad():
+            for net_name, net in nets_iter:
+                for pname, p in net.named_parameters():
+                    if not p.requires_grad:
+                        continue
+                    g = self._group_key(net_name, pname)
+                    val = p.detach()
+                    sq = float(val.pow(2).sum().item())
+                    mx = float(val.abs().max().item()) if val.numel() else 0.0
+                    param_sq[g] = param_sq.get(g, 0.0) + sq
+                    param_max[g] = max(param_max.get(g, 0.0), mx)
+                    if include_grads and p.grad is not None:
+                        gv = p.grad.detach()
+                        gsq = float(gv.pow(2).sum().item())
+                        gmx = float(gv.abs().max().item()) if gv.numel() else 0.0
+                        grad_sq[g] = grad_sq.get(g, 0.0) + gsq
+                        grad_max[g] = max(grad_max.get(g, 0.0), gmx)
+
+        out: Dict[str, float] = {}
+        total_p_sq = 0.0
+        total_g_sq = 0.0
+        for g, sq in param_sq.items():
+            out[f"param_norm/{g}"] = float(sq ** 0.5)
+            total_p_sq += sq
+        for g, mx in param_max.items():
+            out[f"param_absmax/{g}"] = mx
+        for g, sq in grad_sq.items():
+            out[f"grad_norm/{g}"] = float(sq ** 0.5)
+            total_g_sq += sq
+        for g, mx in grad_max.items():
+            out[f"grad_absmax/{g}"] = mx
+        out["param_norm/total"] = float(total_p_sq ** 0.5)
+        out["param_absmax/total"] = max(param_max.values()) if param_max else 0.0
+        if include_grads:
+            out["grad_norm/total"] = float(total_g_sq ** 0.5)
+            out["grad_absmax/total"] = max(grad_max.values()) if grad_max else 0.0
+        return out
+
     def _on_main_rank(self):
-        return torch.device(self.device) == torch.device("cuda:0") or torch.device(self.device) == torch.device("cpu")
+        # torch.device("cuda") and torch.device("cuda:0") compare unequal
+        # because the former has index=None. Match by type + index instead
+        # so users passing --device cuda (without an index) still trigger
+        # save() / wandb / config dump from the main rank.
+        dev = torch.device(self.device)
+        if dev.type == "cpu":
+            return True
+        if dev.type == "cuda" and (dev.index is None or dev.index == 0):
+            return True
+        return False
 
     def _set_logger(self,log_file = None):
         # Create a logger that log both to a log fiel and console
