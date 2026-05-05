@@ -835,3 +835,15 @@
   - GaussianSampler checks sde_format case-sensitively: "VE"/"VP" only, not "ve"/"vp"
   - dict.get(key, default) returns None when key exists with None value; use `or default` pattern
 ---
+
+## 2026-04-12 - US-015 - TESTER — DatasetMixer and training loop integration test validation
+- Executed `pytest dtmol/data/tests/test_train_integration.py -v --timeout=180`: **5 passed, 1 skipped** (75.68s, exit 0)
+- Executed `mypy --ignore-missing-imports dtmol/data/tests/test_train_integration.py`: **Success, no issues**
+- Full regression suite `pytest dtmol/data/tests/ -v --timeout=180`: **154 passed, 8 skipped** (132.74s) — no regressions
+- Verified all 11 acceptance criteria by execution (see ralph/test_results/US-015/attempt-1/validation.md)
+- tier_b_force_loss test correctly skips — MISATO records lack force data, which is expected behavior
+- **Verdict: TEST_PASSED**
+- **Learnings:**
+  - Full integration test suite (154 tests) runs in ~2min on CPU — reasonable for CI
+  - The 1 skip (tier B force) is a data characteristic, not a bug — MISATO converter doesn't include force data
+---

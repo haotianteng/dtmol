@@ -459,8 +459,8 @@
         "cd /home/haotiant/Projects/CMU/dtmol && python3 -m pytest dtmol/data/tests/test_train_integration.py -v --timeout=180 exits 0",
         "cd /home/haotiant/Projects/CMU/dtmol && python3 -m pytest dtmol/data/tests/test_train_integration.py -v output contains at least one 'PASSED'"
       ],
-      "status": "READY_FOR_TEST",
-      "passes": false,
+      "status": "TEST_PASSED",
+      "passes": true,
       "implementation_notes": "Created dtmol/data/tests/test_train_integration.py with 6 test functions across 3 test classes:\n\n1. TestMixedTrainStep (3 tests): builds DatasetMixer from datamix_default.yaml (filtering to available LMDBs, requires >=2), constructs encoder/decoder/DiffusionTrainer, runs train_step on 3 batches (batch_size=2, CPU). Validates loss finite, loss_dict keys (total_loss, diffusion_loss, force_loss, trrot_loss, pert_loss), and all values finite.\n\n2. TestTierAwareForce (2 tests): creates DiffusionTrainer with lambda_force=0.1, lambda_fd_force=0.05. Verifies tier_a_force_loss/tier_b_force_loss appear in loss_dict when respective tier data is sampled. Skips gracefully if tier data not found in batches.\n\n3. TestLegacyMode (1 test): loads PDBBind from /data/unimol_data/..., runs one train_step via CrossDataset path, checks finite loss. Skips if data or pretrain dicts missing.\n\nAlso fixed several integration bugs:\n- unified_dataset.py: timestep None guard in MISATO frame_stride check\n- unified_dataset.py: collate_fn now combines mol_diffuse_trrot_score + mol_diffuse_perturb_score into mol_diffuse_score for DiffusionTrainer compatibility\n- dtmol_train_test.py: fixed Decoder.forward call to pass all required args (coor_molecule, coor_protein, timesteps, single_molecule_mask)\n- dtmol_train_test.py: updated diffusion_loss to use split trrot/perturb keys (compatible with both CrossDataset and UnifiedDataset)\n- dtmol_train_test.py: slice trrot_score to [:, :2] to handle CrossDataset padding\n\nAll tests pass: 5 passed, 1 skipped (tier B force loss — MISATO records lack force data). Mypy passes. 112 existing tests still pass (no regressions).",
       "files_changed": [
         "dtmol/data/tests/test_train_integration.py",
@@ -468,8 +468,8 @@
         "dtmol/dtmol_train_test.py"
       ],
       "failure_reason": null,
-      "test_evidence": null,
-      "test_report": null,
+      "test_evidence": "See ralph/test_results/US-015/attempt-1/stdout.log — 5 passed, 1 skipped in 75.68s. Mypy: ralph/test_results/US-015/attempt-1/mypy.log — Success. Full regression suite: 154 passed, 8 skipped in 132.74s.",
+      "test_report": "All 11 acceptance criteria verified by execution. pytest exits 0 with 5 passed, 1 skipped (tier_b_force_loss skip is expected — MISATO records lack force data). Loss is finite for all batches, loss_dict contains all required keys, tier_a_force_loss appears when lambda_force > 0, legacy mode produces finite loss. Mypy passes. No regressions in full test suite (154 passed). See ralph/test_results/US-015/attempt-1/validation.md for detailed checklist.",
       "fail_count": 0
     }
   ]
