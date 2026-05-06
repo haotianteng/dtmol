@@ -723,10 +723,16 @@ class TransformerDecoderWithPair(nn.Module):
             nn.init.constant_(block.adaLN_modulation[-1].bias, 0)
 
         ## Zero-out output layers:
+        # NOTE: only adaLN modulation zeroed. The standard DiT trick zero-inits
+        # the *terminal* output projection so pred=0 at init. In our architecture
+        # final_layer.linear is *not* terminal — a multi-layer DiffusionHead/
+        # DiffusionPoolHead runs downstream. Zeroing final_layer.linear pins
+        # decoder_rep=0 at init, which means the head's MLP receives zero input
+        # and most of its weight gradients vanish (only biases update). Keep
+        # adaLN_modulation zero so the modulate(...) operator is identity at
+        # init, but let the linear projection learn from a normal Xavier start.
         nn.init.constant_(self.final_layer.adaLN_modulation[-1].weight, 0)
         nn.init.constant_(self.final_layer.adaLN_modulation[-1].bias, 0)
-        nn.init.constant_(self.final_layer.linear.weight, 0)
-        nn.init.constant_(self.final_layer.linear.bias, 0)
 
     def forward(
         self,
