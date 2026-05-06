@@ -72,6 +72,7 @@ def main():
     ap.add_argument("--device", type=str, default="cuda")
     ap.add_argument("--no-pretrain", action="store_true",
                     help="Skip loading pretrained encoder weights")
+    ap.add_argument("--batch-size", type=int, default=1)
     args = ap.parse_args()
 
     torch.manual_seed(args.seed)
@@ -112,7 +113,7 @@ def main():
         protein_dict=protein_dict, config=ds_config,
         diffusion_samplers={"molecule": molecule_sampler, "protein": protein_sampler},
     )
-    train_loader = get_mixed_dataloader(mixer, batch_size=1, num_workers=0)
+    train_loader = get_mixed_dataloader(mixer, batch_size=args.batch_size, num_workers=0)
 
     config = CONFIG(
         lambda_force=0.0, lambda_fd_force=0.0, force_loss_fn="mse",
@@ -196,6 +197,11 @@ def main():
         f"{'dec':>7} {'node':>7} {'loss':>8}",
         flush=True,
     )
+
+    history: dict[str, list[float]] = {
+        "ratio_tr": [], "ratio_p": [], "cos_tr": [], "cos_p": [],
+        "pred_tr": [], "pred_p": [], "loss": [],
+    }
 
     t0 = time.time()
     for i, batch in enumerate(train_loader):
@@ -289,6 +295,14 @@ def main():
         cos_tr = cos_sim(pr_trrot_active, tg_trrot_active)
         cos_p = cos_sim(pr_pert_active, tg_pert_active)
 
+        history["ratio_tr"].append(ratio_tr if ratio_tr == ratio_tr else float("nan"))
+        history["ratio_p"].append(ratio_p if ratio_p == ratio_p else float("nan"))
+        history["cos_tr"].append(cos_tr if cos_tr == cos_tr else float("nan"))
+        history["cos_p"].append(cos_p if cos_p == cos_p else float("nan"))
+        history["pred_tr"].append(rms(pr_trrot_active))
+        history["pred_p"].append(rms(pr_pert_active))
+        history["loss"].append(loss.item())
+
         print(
             f"#{i:>3d} {int(mol_t):>5d} {int(sgl):>3d} | "
             f"{rms(tg_trrot_active):>8.2e} {rms(pr_trrot_active):>8.2e} "
@@ -314,12 +328,25 @@ def main():
         if i % 10 == 0 and DEVICE.startswith("cuda"):
             torch.cuda.empty_cache()
 
-    print(f"\nDone in {time.time()-t0:.1f}s")
-    print("\nLegend:")
-    print("  ratio = actual_loss / baseline_loss")
-    print("  ratio ~ 1.0  -> head is producing ~zero predictions (DEAD HEAD)")
-    print("  ratio < 0.5  -> head is learning to predict the score")
-    print("  ratio > 1.5  -> head is predicting in the wrong direction")
+    # ----- Aggregate over last K steps -----
+    K = max(1, min(50, len(history["ratio_tr"])))
+    def _tail_mean(name: str) -> float:
+        vals = [v for v in history[name][-K:] if v == v]  # drop NaN
+        return float(sum(vals) / len(vals)) if vals else float("nan")
+    def _tail_mean_abs(name: str) -> float:
+        vals = [abs(v) for v in history[name][-K:] if v == v]
+        return float(sum(vals) / len(vals)) if vals else float("nan")
+
+    print(f"\nDone in {time.time()-t0:.1f}s, {len(history['loss'])} steps")
+    print(f"\n=== AGGREGATE over last {K} steps ===")
+    print(f"  ratio_tr (mean):   {_tail_mean('ratio_tr'):.3f}    (lower=better, baseline=1.0)")
+    print(f"  ratio_p  (mean):   {_tail_mean('ratio_p'):.3f}    (lower=better, baseline=1.0)")
+    print(f"  |cos_tr| (mean):   {_tail_mean_abs('cos_tr'):.3f}    (higher=better)")
+    print(f"  |cos_p|  (mean):   {_tail_mean_abs('cos_p'):.3f}    (higher=better)")
+    print(f"  pred_tr_rms (mean):{_tail_mean('pred_tr'):.3e}")
+    print(f"  pred_p_rms  (mean):{_tail_mean('pred_p'):.3e}")
+    print(f"  loss     (mean):   {_tail_mean('loss'):.3f}")
+    print("\nLegend: ratio < 0.5 -> learning. cos|>| > 0.3 -> direction-aligned.")
 
 
 if __name__ == "__main__":
