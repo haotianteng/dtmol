@@ -129,6 +129,13 @@ def main():
         net.to(DEVICE)
         net.train()
 
+    if os.environ.get("NO_DROPOUT", "0") == "1":
+        for net in trainer.nets.values():
+            for m in net.modules():
+                if isinstance(m, torch.nn.Dropout):
+                    m.p = 0.0
+        print("[mode] all nn.Dropout p=0 (BN still in train mode)", flush=True)
+
     optimizer = torch.optim.Adam(trainer.nets["decoder"].parameters(), lr=args.lr)
 
     # ----- Hooks: capture decoder_rep, node_rep, and head inputs/outputs -----

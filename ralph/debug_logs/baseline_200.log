@@ -1,0 +1,65 @@
+  warnings.warn(
+  warnings.warn(
+  warnings.warn(
+  warnings.warn(
+  warnings.warn(
+  warnings.warn(
+  warnings.warn(
+  warnings.warn(
+  warnings.warn(
+  warnings.warn(
+  warnings.warn(
+  warnings.warn(
+  warnings.warn(
+  warnings.warn(
+  warnings.warn(
+  warnings.warn(
+  warnings.warn(
+  warnings.warn(
+  warnings.warn(
+  warnings.warn(
+  warnings.warn(
+  warnings.warn(
+  warnings.warn(
+  warnings.warn(
+  warnings.warn(
+  warnings.warn(
+  warnings.warn(
+  warnings.warn(
+  warnings.warn(
+  warnings.warn(
+  warnings.warn(
+  warnings.warn(
+  warnings.warn(
+  warnings.warn(
+  warnings.warn(
+  warnings.warn(
+  warnings.warn(
+  warnings.warn(
+  warnings.warn(
+  warnings.warn(
+  warnings.warn(
+  warnings.warn(
+  warnings.warn(
+  warnings.warn(
+  warnings.warn(
+  warnings.warn(
+  warnings.warn(
+  warnings.warn(
+  warnings.warn(
+  warnings.warn(
+  warnings.warn(
+  warnings.warn(
+  warnings.warn(
+  warnings.warn(
+  warnings.warn(
+  warnings.warn(
+Done in 169.6s, 200 steps
+=== AGGREGATE over last 50 steps ===
+  ratio_tr (mean):   1.002    (lower=better, baseline=1.0)
+  ratio_p  (mean):   1.000    (lower=better, baseline=1.0)
+  |cos_tr| (mean):   0.337    (higher=better)
+  |cos_p|  (mean):   0.056    (higher=better)
+  pred_tr_rms (mean):2.504e-02
+  pred_p_rms  (mean):4.515e-04
+  loss     (mean):   1.997
