@@ -337,6 +337,12 @@ if __name__ == "__main__":
                         help="Force loss function (default: mse)")
     parser.add_argument("--use-wandb", action="store_true", default=False,
                         help="Enable wandb logging")
+    parser.add_argument("--dropout", type=float, default=0.0,
+                        help="Dropout probability for transformer/DiT/heads "
+                             "(default 0.0). Set >0 only if you've confirmed "
+                             "the architecture trains stably — dropout in "
+                             "train mode introduces gradient noise that can "
+                             "kill score-matching learning signal.")
     args = parser.parse_args()
 
     package_path = "/home/haotiant/Projects/CMU/dtmol/"
@@ -350,8 +356,15 @@ if __name__ == "__main__":
     nets, atom_dict = build_encoder(pretrain_f)
 
     ##% Load the decoder
-    print("Loading the decoder")
-    decoder_config = DummyModelConfig(mode="train")
+    print(f"Loading the decoder with dropout={args.dropout}")
+    decoder_config = DummyModelConfig(
+        mode="train",
+        dropout=args.dropout,
+        emb_dropout=args.dropout,
+        attention_dropout=args.dropout,
+        activation_dropout=args.dropout,
+        head_dropout=args.dropout,
+    )
     decoder = Decoder(decoder_config, atom_dict['ligand_dict'])
     decoder.register_diffusion_pool_head("tr-rotation", 6)
     decoder.register_diffusion_head("perturbation", 3)

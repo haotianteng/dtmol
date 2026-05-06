@@ -72,6 +72,7 @@ def main():
     ap.add_argument("--device", type=str, default="cuda")
     ap.add_argument("--no-pretrain", action="store_true",
                     help="Skip loading pretrained encoder weights")
+    ap.add_argument("--batch-size", type=int, default=1)
     args = ap.parse_args()
 
     torch.manual_seed(args.seed)
@@ -112,7 +113,7 @@ def main():
         protein_dict=protein_dict, config=ds_config,
         diffusion_samplers={"molecule": molecule_sampler, "protein": protein_sampler},
     )
-    train_loader = get_mixed_dataloader(mixer, batch_size=1, num_workers=0)
+    train_loader = get_mixed_dataloader(mixer, batch_size=args.batch_size, num_workers=0)
 
     config = CONFIG(
         lambda_force=0.0, lambda_fd_force=0.0, force_loss_fn="mse",
