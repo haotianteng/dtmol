@@ -847,3 +847,34 @@
   - Full integration test suite (154 tests) runs in ~2min on CPU — reasonable for CI
   - The 1 skip (tier B force) is a data characteristic, not a bug — MISATO converter doesn't include force data
 ---
+
+## 2026-05-06 - DEBUG/training-convergence - ROOT-CAUSE PASS 1 — plateau diagnosed as dead head + missing translation signal
+Branched from ralph/dataset-integration after committing the SE3 stabilization (BatchNorm+residual+bounded Gates) attempt — that was for a *different* failure mode (NaN/divergence). Plateau is older and persists across (with-encoder, no-encoder, from-scratch).
+
+Reproducer: `python scripts/debug_plateau.py --max-batches 30 --device cuda --lr {1e-6,1e-4}`
+Symptom (lr=1e-6, datamix_unit_cell.yaml, 14-layer SE3 decoder):
+  - tr-rotation pred_rms ≈ 1e-3 vs target_rms ≈ 1.0 → actual_loss / baseline_loss = 1.00
+  - perturbation  pred_rms drops 0.30 → 7e-4 over 30 steps under lr=1e-4
+  - decoder_rep_rms = 0.00 at step 0, growing to ~0.07 over 30 steps
+
+What we now know:
+1. **DiT zero-init pins decoder_rep at 0** (block.py:725-729 hard-zeros final_layer.linear and adaLN). Standard DiT trick — but the head architecture downstream is not a single linear; it's `pred = x_gate(MLP(decoder_rep)) * y_branch(node_rep)`. With Sigmoid gate, init pred = 0.5 * y_branch ≠ 0, so initial loss > baseline. The optimizer's fastest gradient direction is to *shrink* y_branch (kill the head) rather than align its direction with target — so it regresses toward baseline before learning anything.
+2. **Zero-init the geometric projection (`out_proj2` / `linear3`) clears that** — pred=0 at init, loss=baseline, no shrink-first phase. With ZERO_INIT_HEADY=1 over 80 steps the perturbation cosine-with-target slowly creeps up (step 4: -0.05, step 50: +0.30, step 76: +0.22). Direction-learning *does* start, but extremely slowly. tr-rotation cos stays random (±0.7 bouncing).
+3. **Translation is structurally unlearnable for single-molecule records.** The SE3 stack consumes pairwise displacements `r_i - r_j` which are translation-invariant. Without a reference point (no protein in unit-cell data), node_rep contains zero information about the global translation noise, so the trrot head's translation 3-DOF cannot be supervised. This explains the persistent trrot plateau on this dataset specifically.
+4. **DiffusionPoolHead pools `out.mean(dim=1)` over atoms** — for centered, nearly-symmetric unit cells this washes out per-atom signal, making the rotation 3-DOF also poorly conditioned even when the per-atom features carry it.
+
+Files added on debug/training-convergence:
+- scripts/debug_plateau.py — one-shot diagnostic running 30+ train_steps and reporting per-head target/pred RMS, cosine similarity, baseline-vs-actual MSE ratio, decoder_rep_rms, node_rep_rms.
+- ralph/debug_logs/plateau_init.log, plateau_lr1e-4.log, plateau_zeroheady_lr1e-4.log
+
+Next steps (in priority order):
+- (a) Fix the y-branch zero-init in block.py:DiffusionHead/DiffusionPoolHead so all runs get the cleaner training start. Small, low-risk.
+- (b) For trrot on single-mol: either drop the translation 3-DOF from the head when single_molecule_mask is True, or add an absolute-position feature to the head input so the network has a reference. Using the centered-mol-mean (currently stored at full_coor[:,0,:]) as a learnable token would provide the missing reference.
+- (c) Replace mean-pooling in DiffusionPoolHead with attention-pooling against a query token; mean over centered atoms is provably ~0 in symmetric cases.
+- (d) Run a 1000-step training under (a) on unit_cell to see if perturbation cos_sim continues climbing — long enough to confirm direction-learning is just slow rather than blocked.
+
+Learnings (Codebase Patterns):
+- **Diagnostic recipe for plateau**: report (target_rms, pred_rms, baseline_loss, actual_loss, ratio, cos_sim) per head per step. Ratio ≈ 1.0 with shrinking pred = "regressed to baseline"; ratio ≈ 1.0 with growing pred but cos_sim ≈ 0 = "learning magnitude before direction"; ratio < 0.5 = healthy.
+- **DiT zero-init only works if every path from the conditioning to the loss is multiplied by something that's zero at init.** Adding a parallel Sigmoid-gated geometric branch breaks the trick — the geometric branch has to be zero-init too.
+- **Translation prediction needs a reference frame.** A purely displacement-based equivariant network has nothing to predict translation noise *against* on single-molecule data.
+---
