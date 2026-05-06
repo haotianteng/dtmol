@@ -878,3 +878,45 @@ Learnings (Codebase Patterns):
 - **DiT zero-init only works if every path from the conditioning to the loss is multiplied by something that's zero at init.** Adding a parallel Sigmoid-gated geometric branch breaks the trick — the geometric branch has to be zero-init too.
 - **Translation prediction needs a reference frame.** A purely displacement-based equivariant network has nothing to predict translation noise *against* on single-molecule data.
 ---
+
+## 2026-05-06 - DEBUG/training-convergence - ROOT-CAUSE PASS 2 — overfit-one decisive, multi-record slow
+
+Big finding: the architecture *can* learn — when run on a single fixed batch with `dropout=0` and y-branch zero-init, after 1000 steps:
+    ratio_tr=0.28 cos_tr=+0.85   ratio_p=0.88 cos_p=+0.36
+That rules out "fundamentally broken" and pins the issue on *training dynamics*: dropout in train mode injects gradient noise that is fine for one transformer but apparently breaks the bootstrap loop in our diffusion head, and the y-branch random init creates a regress-to-baseline phase.
+
+Multi-record (300+ steps) still hovers near baseline because each batch is a different molecule with different rotation/translation noise; the per-step gradient signal averages out across diverse inputs.
+
+### Branches stacked on top of `debug/training-convergence`
+
+- `fix/zero-init-y-branch` (commit `d987bef` and `50f2716`)
+  - block.py: zero-init `linear3.weight` (DiffusionHead) and `out_proj2.weight` (DiffusionPoolHead). Avoids regress-to-baseline.
+  - dtmol_train_test.py: `--dropout` flag, default 0.0. Plumbed into all dropout layers via `DummyModelConfig`.
+  - Multi-record (1000 steps, lr=1e-4): ratio_p 0.988 (was 1.000), |cos_p| 0.113 (was 0.056), pred_p_rms 6.5e-2 (was 4.5e-4). Real but small.
+- `fix/lift-decoder-final-zeroinit` (in progress, commit pending)
+  - block.py: removes `nn.init.constant_(self.final_layer.linear.weight, 0)` and `nn.init.constant_(self.final_layer.linear.bias, 0)` from `TransformerDecoderWithPair.initialize_parameters`. Keeps `adaLN_modulation` zeroed.
+  - Rationale: the DiT zero-init trick zero-inits the *terminal* projection so pred=0 at init. Our architecture has a multi-layer DiffusionHead downstream, so `final_layer.linear` is not terminal. Zeroing it pins `decoder_rep=0`, starving the head's MLP weights (linear1→act→LN→linear2) of gradient (only biases update — slow ramp-up of `decoder_rep`).
+  - With Fix A's y-branch zero-init handling pred=0 at init, the decoder's final_layer.linear can — and should — start from a normal Xavier init.
+
+### Diagnostic infrastructure
+- `scripts/debug_plateau.py` — multi-record diagnostic, env vars `ZERO_INIT_HEADY=1`, `NO_DROPOUT=1`, flags `--max-batches`, `--lr`, `--batch-size`. Prints per-step (target_rms, pred_rms, cos_sim, ratio) and aggregates over last 50 steps.
+- `scripts/debug_overfit_one.py` — caches one batch and tries to overfit. Pass criterion: `ratio_p, ratio_tr → 0` and `|cos| → 1`.
+- All run logs preserved under `ralph/debug_logs/`.
+
+### Open questions for next iteration
+- (a) Does Fix B unlock fast multi-record learning? In progress.
+- (b) DiffusionPoolHead's `out.mean(dim=1)` over all atoms washes out per-atom signal on near-symmetric structures (unit cells). Replace with attention-pool against a learned query.
+- (c) trrot translation 3-DOF is structurally unlearnable on `single_molecule_mask=True` data — the SE3 stack input is pairwise displacements (translation-invariant). Either zero out trrot translation loss when single-mol, or feed an absolute-position reference token.
+- (d) Pretrain encoder (UniMol on protein/molecule data) likely irrelevant for unit-cell crystals. Try `--no-pretrain`.
+- (e) sigma_max = 1.5 with atom spacing ~3 Å destroys local structure for the high-sigma half of training timesteps. Consider biasing the sampled-t distribution toward lower sigmas, OR shrinking sigma_max.
+
+### How to evaluate the next fix
+```
+PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NO_DROPOUT=1 \
+  python scripts/debug_plateau.py --max-batches 500 --lr 1e-4 --device cuda \
+  > ralph/debug_logs/<run>.log 2>&1
+sed -n '/AGGREGATE/,/Legend/p' ralph/debug_logs/<run>.log
+```
+"Decent" target on unit_cell: `ratio_p < 0.5` over the last 50-step window.
+
+---
