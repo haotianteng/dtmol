@@ -113,6 +113,27 @@ def main():
         protein_dict=protein_dict, config=ds_config,
         diffusion_samplers={"molecule": molecule_sampler, "protein": protein_sampler},
     )
+    # Fix E: optionally filter dataset to records whose system_id starts with
+    # SYSTEM_ID_PREFIX env var. Lets us test "is gradient signal averaging across
+    # crystal types the bottleneck?" by training on a single type.
+    sys_prefix = os.environ.get("SYSTEM_ID_PREFIX")
+    if sys_prefix:
+        import pickle
+        for i, ds in enumerate(mixer._datasets):
+            env = ds._get_env()
+            keep = []
+            with env.begin() as txn:
+                for k in ds._keys:
+                    rec = pickle.loads(txn.get(k))
+                    sid = rec.get("system_id", "")
+                    if isinstance(sid, str) and sid.startswith(sys_prefix):
+                        keep.append(k)
+            ds._keys = keep
+            print(f"[fix-E] filtered dataset {i} '{mixer._names[i]}' to {len(keep)} records "
+                  f"matching system_id prefix '{sys_prefix}'", flush=True)
+        # Recompute mixer's cumulative weights / lengths so sampling stays valid
+        mixer._lengths = [len(ds) for ds in mixer._datasets]
+        mixer._cum_lengths = np.cumsum([0] + mixer._lengths)
     train_loader = get_mixed_dataloader(mixer, batch_size=args.batch_size, num_workers=0)
 
     config = CONFIG(
@@ -204,9 +225,17 @@ def main():
     }
 
     t0 = time.time()
-    for i, batch in enumerate(train_loader):
-        if i >= args.max_batches:
-            break
+    def _loop():
+        # Re-iterate the dataloader indefinitely so a small (filtered) dataset
+        # still gets max_batches gradient steps.
+        epoch = 0
+        while True:
+            for b in train_loader:
+                yield b
+            epoch += 1
+    batch_iter = _loop()
+    for i in range(args.max_batches):
+        batch = next(batch_iter)
 
         def to_device(d):
             out = {}
