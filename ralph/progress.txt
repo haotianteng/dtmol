@@ -920,3 +920,44 @@ sed -n '/AGGREGATE/,/Legend/p' ralph/debug_logs/<run>.log
 "Decent" target on unit_cell: `ratio_p < 0.5` over the last 50-step window.
 
 ---
+
+## 2026-05-06 - DEBUG/training-convergence - PASS 3 — fix iteration summary, paths forward
+
+Branch state at `debug/training-convergence` (HEAD: `7905c30`):
+- Fix A (zero-init y-branch in DiffusionHead/DiffusionPoolHead) merged from `fix/zero-init-y-branch`.
+- Fix B (lift DiT zero-init on `decoder.final_layer.linear`) merged from `fix/lift-decoder-final-zeroinit`.
+- Fix C (curriculum sigma_pert_max=0.3) tested on `fix/curriculum-sigma`, NOT merged — no improvement.
+
+500-step multi-record diagnostic on unit_cell datamix (lr=1e-4, NO_DROPOUT=1):
+| config              | ratio_p | |cos_p| | pred_p_rms |
+|---------------------|---------|---------|------------|
+| baseline (200 step) | 1.000   | 0.056   | 4.5e-04    |
+| Fix A (1000 step)   | 0.988   | 0.113   | 6.5e-02    |
+| Fix A + B           | 0.994   | 0.122   | 5.1e-02    |
+| Fix A + B + C(0.3)  | 0.999   | 0.059   | 2.1e-02    |
+| overfit-one (1k st) | **0.88**| **0.36**|            |
+
+The overfit-one decisive result confirms the architecture is functional. Multi-record direction-learning is just slow because each batch is a different molecule with different rotation/translation noise; per-step gradient signal averages across diverse inputs.
+
+### Concrete next-pass candidates (priority order)
+
+1. **Single-crystal-type subset.** Modify `datamix_unit_cell.yaml` to point at a single crystal type's records (e.g. just FCC Al), so the model has consistent geometric structure to learn. If this trains to ratio_p < 0.5 in a few thousand steps, the multi-type diversity is the bottleneck (as suspected); we can then graduate to 2 types, 4 types, etc.
+2. **Replace multiplicative scalar gate with simple equivariant linear head.** `pred = self.linear3(node_rep_perm)` only — no `Sigmoid(MLP(decoder_rep)) * y` gating. With Fix A's zero-init this is `pred = 0` at init (clean DiT-style start), and the head's only learnable path is the equivariant projection. Time conditioning is already inside the SE3 stack via DiT layers, so we don't lose t-conditioning entirely. Fewer interacting gradients to bootstrap.
+3. **Replace `DiffusionPoolHead.mean(dim=1)` with attention-pool against a learned query.** Mean over centered-symmetric structures washes out signal.
+4. **Train at scale.** 50K+ steps with batch=4, lr=2e-4. Real epochs over 13.6K records. Bring back the wandb param/grad-norm panel from `dtmol/dtmol_train_base.py` to monitor per-group progress.
+5. **trrot translation 3-DOF for single-mol.** Either zero-out trrot translation loss when `single_molecule_mask=True`, or feed `full_coor[:,0,:]` (BOS / mol centroid) as an absolute-position reference token to give translation a learnable signal.
+
+### What we know does NOT help
+- Higher lr alone (1e-3 with eval-mode broke BN running stats; with train-mode caused divergence then collapse).
+- Larger batch size (4, 8) — variance is reduced but multi-record direction-learning stays slow.
+- Curriculum reduce sigma_pert_max — eps targets are sigma-invariant in this codebase's sampler.
+- Pretrained encoder vs random init — user reported equivalent plateau.
+- Encoder gradient on/off — user reported equivalent plateau.
+
+### Reproducer
+```
+PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True NO_DROPOUT=1 \
+  python scripts/debug_plateau.py --max-batches 500 --lr 1e-4 --device cuda
+```
+Outputs an AGGREGATE block at end with mean ratio/cos over the last 50 steps. Decent target on unit_cell: `ratio_p < 0.5`.
+---
