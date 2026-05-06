@@ -919,6 +919,12 @@ class DiffusionHead(nn.Module):
         self.linear2 = nn.Linear(hidden_dim, out_dim)
         self.x_gate = nn.Sigmoid()
         self.linear3 = nn.Linear(input_dim2, out_dim//coord_dim, bias = False)
+        # Zero-init the geometric projection so pred = sigmoid(MLP(0)) * 0 = 0
+        # at init. Otherwise the random non-zero y_branch makes initial loss
+        # > baseline, and the optimizer's fastest gradient path is to shrink
+        # y_branch toward 0 (regress to baseline) rather than rotate it
+        # toward target — locking training in a chance-level plateau.
+        nn.init.zeros_(self.linear3.weight)
         self.activation_fn = get_activation_fn(activation_fn)()
         self.layer_norm = LayerNorm(hidden_dim)
         self.mse_loss = nn.MSELoss(reduction="none")
@@ -992,6 +998,9 @@ class DiffusionPoolHead(nn.Module):
         self.out_proj = nn.Linear(hidden_dim, out_dim)
         self.x_gate = nn.SiLU()
         self.out_proj2 = nn.Linear(input_dim2, out_dim//coord_dim, bias = False)
+        # See DiffusionHead.__init__ for rationale: zero-init y-branch so
+        # pred = SiLU(MLP(0)) * 0 = 0 at init (no regress-to-baseline phase).
+        nn.init.zeros_(self.out_proj2.weight)
         self.dropout = nn.Dropout(p=dropout)
         self.activation_fn = get_activation_fn(activation_fn)()
         self.mse_loss = nn.MSELoss(reduction="none")
