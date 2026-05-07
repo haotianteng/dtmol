@@ -194,11 +194,34 @@ def tweedie_step(nets, samplers, idx, ds, device, t_target: int, seed: int = 0):
     return pred, noisy_np, truth, mask, sigma_t
 
 
-def reverse_trajectory(nets, samplers, idx, ds, device, n_steps: int = 20, seed: int = 0):
-    """Run a reverse diffusion trajectory from t=T-1 down to t=0, recording
-    intermediate coords. Returns list of (t, sigma_t, coords, mask)."""
+def reverse_trajectory(nets, samplers, idx, ds, device, n_steps: int = 20,
+                        seed: int = 0, start_t: Optional[int] = None,
+                        scale: float = 1.0, mode: str = "ddim"):
+    """Reverse-diffuse from start_t (default T-1) down to t=0 using the
+    probability-flow ODE / DDIM-style deterministic step:
+
+        x_{t-1} = x_t - (sigma_t - sigma_{t-1}) * eps_pred
+
+    This is the correct VE discretisation when the model predicts eps. The
+    earlier "Tweedie x0 + fresh randn" step was wrong — it re-injected
+    sigma_{t-1}-scale noise that the model couldn't undo on later steps.
+
+    `mode`:
+      - "ddim"     : pure deterministic Euler step (default).
+      - "tweedie"  : at every step jump to x0_est directly (one-shot Tweedie
+                     applied repeatedly). Useful as a sanity check.
+
+    `scale` multiplies eps_pred at sample time to compensate for an
+    undersized score head (set 1.0 for plain inference).
+
+    Returns: (traj_list, truth, atom_mask_np). traj_list = list of
+    (t, sigma_t, x_displayed[N,3], mask[N]). For ddim mode x_displayed is
+    the running x_t (i.e. what the trajectory looks like at each step). The
+    Tweedie x0_est at each step is reported in `report.json` separately.
+    """
     g_sampler = samplers['molecule'].samplers[-1]
     T = g_sampler.T
+    start_t = T - 1 if start_t is None else int(start_t)
 
     batch = index_to_batch(idx, ds, device)
     mol_clean = batch['net_input']['mol_holo_coord'].clone()
@@ -206,20 +229,23 @@ def reverse_trajectory(nets, samplers, idx, ds, device, n_steps: int = 20, seed:
 
     np.random.seed(seed)
     torch.manual_seed(seed)
-    # Start from pure noise: x_T = x_0 + sigma_T * eps (sigma_T very large in VE)
-    sigma_T = float(g_sampler.noise[T - 1])
-    noise = torch.randn_like(mol_clean) * sigma_T
+    # Initialise x_t = x_0 + sigma_{start_t} * eps
+    sigma_start = float(g_sampler.noise[start_t])
+    noise = torch.randn_like(mol_clean) * sigma_start
     x_t = mol_clean.clone()
     x_t[finite] = mol_clean[finite] + noise[finite]
 
-    ts = np.linspace(T - 1, 0, n_steps).astype(int)
+    # Use a log-spaced schedule from sigma_start down to sigma_min so we spend
+    # more steps at lower sigmas (where structure forms). np.linspace on t
+    # over a log-linear schedule is roughly geometric in sigma already.
+    ts = np.linspace(start_t, 0, n_steps).astype(int)
     truth = mol_clean.cpu().numpy()[0]
     mask_np = finite.cpu().numpy()[0, :, 0]
     traj = []
+    n_mol = mol_clean.size(1)
 
-    for t in ts:
-        sigma_t = float(g_sampler.noise[t])
-        # Run model at this t
+    for i, t in enumerate(ts):
+        sigma_t = float(g_sampler.noise[int(t)])
         batch['net_input']['mol_holo_coord'] = x_t
         batch['net_input']['mol_diffuse_time'] = torch.tensor(
             [[int(t)]], device=device, dtype=torch.long)
@@ -227,20 +253,33 @@ def reverse_trajectory(nets, samplers, idx, ds, device, n_steps: int = 20, seed:
             [[int(t)]], device=device, dtype=torch.long)
         with torch.no_grad():
             output, _ = run_forward(nets, batch)
-        n_mol = mol_clean.size(1)
-        eps_pred = output['perturbation'][:, :n_mol, :]
-        # Tweedie x0 estimate, then re-noise to next t
+        eps_pred = output['perturbation'][:, :n_mol, :] * scale
+
+        # Tweedie x0 estimate (for monitoring)
         x0_est = x_t.clone()
         x0_est[finite] = x_t[finite] - sigma_t * eps_pred[finite]
-        traj.append((int(t), sigma_t, x0_est.cpu().numpy()[0], mask_np))
-        # Move to next sigma (smaller)
-        next_t_idx = ts.tolist().index(t) + 1
-        if next_t_idx < len(ts):
-            t_next = int(ts[next_t_idx])
+        traj.append({
+            "t": int(t), "sigma_t": sigma_t,
+            "x_t": x_t.cpu().numpy()[0].copy(),
+            "x0_est": x0_est.cpu().numpy()[0].copy(),
+            "mask": mask_np,
+        })
+
+        if i + 1 >= len(ts):
+            break
+
+        if mode == "tweedie":
+            # Jump to x0 estimate, then forward-diffuse to next sigma using
+            # SAME eps direction (DDIM-equivalent reformulation).
+            t_next = int(ts[i + 1])
             sigma_next = float(g_sampler.noise[t_next])
-            new_noise = torch.randn_like(mol_clean) * sigma_next
             x_t = x0_est.clone()
-            x_t[finite] = x0_est[finite] + new_noise[finite]
+            x_t[finite] = x0_est[finite] + sigma_next * eps_pred[finite]
+        else:  # "ddim" — Euler step on probability flow ODE
+            t_next = int(ts[i + 1])
+            sigma_next = float(g_sampler.noise[t_next])
+            x_t = x_t.clone()
+            x_t[finite] = x_t[finite] - (sigma_t - sigma_next) * eps_pred[finite]
     return traj, truth, mask_np
 
 
@@ -271,6 +310,14 @@ def main():
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     ap.add_argument("--t-targets", type=int, nargs="+", default=[100, 300, 500, 800])
     ap.add_argument("--traj-steps", type=int, default=20)
+    ap.add_argument("--traj-start-t", type=int, default=None,
+                    help="Start the reverse trajectory at this t (default T-1).")
+    ap.add_argument("--score-scale", type=float, default=1.0,
+                    help="Multiply eps_pred by this at sample time to "
+                         "compensate for an undersized score head.")
+    ap.add_argument("--mode", choices=["ddim", "tweedie"], default="ddim",
+                    help="Reverse-step rule: deterministic ODE Euler (ddim) "
+                         "or repeated Tweedie jump (tweedie).")
     args = ap.parse_args()
 
     logging.basicConfig(level=logging.WARNING)
@@ -357,34 +404,44 @@ def main():
     # ---------- reverse trajectory ----------
     traj, truth, mask = reverse_trajectory(
         nets, samplers, idx, ds, args.device,
-        n_steps=args.traj_steps, seed=0)
-    rmsd_truth = per_atom_rmsd(truth, truth, mask)  # 0.0
+        n_steps=args.traj_steps, seed=0,
+        start_t=args.traj_start_t, scale=args.score_scale, mode=args.mode)
     report["trajectory"] = []
+    rmsd_x_t = []
+    rmsd_x0 = []
     n_steps = len(traj)
     cols = min(n_steps, 5)
     rows = (n_steps + cols - 1) // cols
     fig = plt.figure(figsize=(4 * cols, 4 * rows))
-    for i, (t, sigma, coords, m) in enumerate(traj):
+    for i, step in enumerate(traj):
+        t = step["t"]; sigma = step["sigma_t"]
+        x_t = step["x_t"]; x0 = step["x0_est"]; m = step["mask"]
+        rmsd_t = per_atom_rmsd(x_t, truth, m)
+        rmsd_0 = per_atom_rmsd(x0, truth, m)
+        rmsd_x_t.append(rmsd_t); rmsd_x0.append(rmsd_0)
+        report["trajectory"].append({
+            "step": i, "t": int(t), "sigma_t": sigma,
+            "rmsd_x_t": rmsd_t, "rmsd_x0_est": rmsd_0,
+        })
         ax = fig.add_subplot(rows, cols, i + 1, projection="3d")
-        pts = coords[m]
-        ax.scatter(pts[:, 0], pts[:, 1], pts[:, 2], s=8, alpha=0.7,
-                   c="C0", label=f"x0_est")
-        # overlay truth in red translucent
+        pts_t = x_t[m]
+        ax.scatter(pts_t[:, 0], pts_t[:, 1], pts_t[:, 2], s=8, alpha=0.7,
+                   c="C0", label="x_t")
         ptst = truth[m]
         ax.scatter(ptst[:, 0], ptst[:, 1], ptst[:, 2], s=8, alpha=0.3,
                    c="C3", label="truth")
-        rmsd = per_atom_rmsd(coords, truth, m)
-        report["trajectory"].append({
-            "t": int(t), "sigma_t": sigma, "rmsd_to_truth": rmsd
-        })
-        ax.set_title(f"step {i}  t={t}\nsigma={sigma:.2f}  RMSD={rmsd:.2f}")
+        ax.set_title(
+            f"step {i} t={t}\nsigma={sigma:.2f}  RMSD x_t={rmsd_t:.2f}\n"
+            f"RMSD x0_est={rmsd_0:.2f}")
         ax.set_box_aspect([1, 1, 1])
-    fig.suptitle(f"Reverse diffusion trajectory — {sid}")
+    fig.suptitle(f"Reverse diffusion trajectory — {sid} ({args.mode}, scale={args.score_scale})")
     plt.tight_layout()
     traj_path = os.path.join(args.out_dir, "reverse_trajectory.png")
     fig.savefig(traj_path, dpi=120)
     plt.close(fig)
     print(f"[eval] wrote {traj_path}", flush=True)
+    print(f"[eval] reverse trajectory RMSD: start={rmsd_x_t[0]:.3f}A  "
+          f"end={rmsd_x_t[-1]:.3f}A  best_x0={min(rmsd_x0):.3f}A", flush=True)
 
     # ---------- save report ----------
     rep_path = os.path.join(args.out_dir, "report.json")
