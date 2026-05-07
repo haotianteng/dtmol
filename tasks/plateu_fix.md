@@ -112,13 +112,31 @@ git checkout 4dafb9c       # debug/training-convergence
 - `scripts/eval_denoise_trajectory.py` — loads a saved checkpoint and visualises (a) Tweedie one-step denoising at multiple `t` values and (b) a full reverse-diffusion trajectory of ~20 steps. Outputs `tweedie_panels.png`, `reverse_trajectory.png`, `report.json` under `--out-dir`.
 - All run logs under `ralph/debug_logs/` (`baseline_*`, `fixA_*`, `fixB_*`, `fixC_*`, `fixD_*`, `fixE_*`, `overfit_*`).
 
-## Next problems to attack
+## Multi-type curriculum experiment — warm-start REGRESSES (commit `8e2e7ff`)
 
-1. **Multi-type generalisation.** Take the Fix E `fcc_Al_2x2x2` checkpoint as a warm start and broaden `SYSTEM_ID_PREFIX` to cover more types (e.g. all `fcc_*`, then add `bcc_*`, then arbitrary). Track whether `ratio_tr/p` regress when we add types — if learning sticks, curriculum is the path; if it collapses, we need an architectural fix that handles multi-modal score targets (e.g. type-conditioned heads).
-2. **Per-atom perturbation lag.** On Fix E `fcc_Al`, `cos_p` only reached ~+0.24 after 2000 steps while `cos_tr` reached +0.85. Per-atom predictions are intrinsically harder; possible levers: longer training, widen `linear3` from `(1, 8)` to `(out, hidden)` so the projection has more capacity, or replace the scalar gate with a normalisation-aware additive head.
-3. **Production-script port.** Push the `SYSTEM_ID_PREFIX` filter into `UnifiedDatasetConfig` so `dtmol/dtmol_train_test.py` can run the Fix E setup directly (currently only the diagnostic supports it).
+Took the Fix E `fcc_Al_2x2x2` checkpoint and continued training on all `fcc_*` types (Al 2×2×2, Al 3×3×3, Ca 2×2×2, Au 2×2×2 — different lattice constants 4.05–5.58 Å) for 2000 more steps.
+
+| step | cos_p | ratio_p | comment |
+|---|---|---|---|
+|   99 | −0.00 | 1.01 | warm start OK |
+|  499 | +0.27 | 0.97 | initial bump |
+|  999 | +0.17 | 0.99 | decay starts |
+| 1499 | +0.10 | 0.99 | |
+| 1998 | +0.06 | 1.00 | decayed to baseline |
+
+Aggregate over last 50 steps: `ratio_p 0.994, |cos_p| 0.093` (worse than the fcc_Al-only checkpoint we started from). trrot also regressed (`|cos_tr| 0.36 → 0.32`).
+
+**Mixing types actively unlearns fcc_Al-specific features.** The score function the model has to learn differs per type because lattice constants differ; with the current ~50M-param architecture and 2000 warm-up steps, capacity isn't enough to hold multiple. Saved at `dtmol/models/bindingpose_20260506_fixE_fcc_all/ckpt-2000.pt`.
+
+**Implication for the next iteration:** small architectural changes won't fix multi-type — need either type-conditioned heads (give the head explicit access to atom-type embedding so it can route per-type), or much wider channels (the SE3 output has only 8 vector channels feeding a `(1, 8)` `linear3`), or much longer training to memorise per-type score functions in shared parameters.
+
+## Other open problems
+
+1. **Per-atom perturbation magnitude calibration.** Even on fcc_Al-only Fix E, `pred_p_rms ≈ 0.15` against target ≈ 1.0 — predictions are 15% of needed magnitude. Tweedie one-step at sigma=1.0 reduces RMSD by only ~1.4%. The model has the *direction* partially right (cos_p hits +0.4 in some training steps) but the magnitude doesn't catch up. Likely needs much longer training or a head redesign that makes magnitude easier to bring up.
+2. **Reverse trajectory diverges.** The 20-step reverse trajectory in `ralph/test_results/fixE_fcc_Al/reverse_trajectory.png` starts at RMSD=2.30 and grows to ~4.2. With magnitude-undersized `eps_pred`, the noise put back at each step dominates. A working denoising sampler will only be possible after magnitude calibration improves.
+3. **Production-script port.** Push the `SYSTEM_ID_PREFIX` filter and `--load-checkpoint` into `UnifiedDatasetConfig` and `dtmol/dtmol_train_test.py` so the production training loop can use the Fix E setup directly.
 4. **trrot translation 3-DOF on single-mol data.** Translation is structurally unlearnable on single-molecule records (SE3 input is pairwise displacements which are translation-invariant). Either zero out trrot translation loss when `single_molecule_mask=True`, or feed `full_coor[:,0,:]` (mol centroid) as an absolute-position reference token.
-5. **Wider `linear3`.** Current shape `(out_dim/3, input_dim2=8)` — only 8 parameters carry the per-atom score direction. Compare with widening `input_dim2` (controlled by SE3 stack output channels).
+5. **Wider `linear3`.** Current shape `(out_dim/3, input_dim2=8)` — only 8 parameters carry the per-atom score direction per output channel. Increasing the SE3 stack's output channels (the `multiplier` in `SE3ELayer` — currently 4) is the cheapest way to give the head more capacity for multi-modal score targets.
 
 ## How to validate a fix
 
