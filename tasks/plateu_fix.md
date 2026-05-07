@@ -132,6 +132,31 @@ Aggregate over last 50 steps: `ratio_p 0.994, |cos_p| 0.093` (worse than the fcc
 
 **Implication for the next iteration:** small architectural changes won't fix multi-type — need either type-conditioned heads (give the head explicit access to atom-type embedding so it can route per-type), or much wider channels (the SE3 output has only 8 vector channels feeding a `(1, 8)` `linear3`), or much longer training to memorise per-type score functions in shared parameters.
 
+## Today's session (2026-05-07): single-record overfit eval
+
+A single fixed-t overfit produces a model that **does** denoise at the trained timestep:
+
+- `scripts/run_overfit_traj.py`: overfits one fcc_Al_2x2x2 record at fixed t=4500 with reduced rotation/translation sigmas (`SIGMA_ROT_MAX=SIGMA_TR_MAX=0.11`, `SIGMA_PERT_MAX=1.5`) so perturbation noise dominates.
+- 1500 steps at `lr=5e-4` → training loss 0.002 (essentially perfect at the trained input distribution).
+- Eval at trained_t=4500 (5 fresh-noise trials):
+  - cos = +0.76, pred_rms = 0.75 (vs target_rms = 0.98)
+  - Tweedie: noisy 1.93 Å → denoised **1.33 Å** (-31.3%)
+
+Two bugs found and fixed in the eval path during this work:
+1. `net.eval()` flips BatchNorm to running stats which were tracked over too few steps to be reliable; eval cos collapses 1.0 → 0.35. **Fix:** keep `net.train()` with dropout disabled at eval (saves running stats for later; uses batch stats for the prediction).
+2. `sigma_t = perturb_norm[0]` was reading the BOS token's norm = 0; Tweedie's `sigma * eps_pred` was always 0. **Fix:** use the first non-zero norm.
+
+**Why we can't (yet) reach RMSD < 1 from σ=1 with this approach:**
+- Single-step Tweedie cap: 1 − √(1 − cos²) ≈ 35% at cos=0.76. Need cos > 0.87 for ≥50% reduction (RMSD 1.93 → < 1).
+- Iterating Tweedie at fixed trained_t with progressive re-noising (`scripts/iterated_tweedie.py`) **diverges** — the model expects σ_train=1.045 but receives x_t at smaller σ; removing σ_train·eps_pred overshoots the real noise.
+- Training the same model on the full t range (no fixed_t) doesn't fit (loss stays at baseline ≈ 2.18 even on a single record). Single-record + multi-t demands too much from the architecture.
+- Training 5000 steps at fixed_t collapsed loss to 0 around step 1900 then **diverged** back to 2.0; over-training is unsafe without proper regularisation/early-stopping.
+
+**Bottom line for RMSD < 1:**
+- The earlier "neutral model + start at σ=0.51" trajectory still satisfies the literal criterion (final RMSD 0.79 < 1) but doesn't show real denoising.
+- The new fixed-t overfit shows real denoising (-31%) but caps at RMSD = 1.33 from the σ=1 start.
+- To get both ("real denoising AND final < 1"), we need to push cos higher. Concrete path: train a dedicated head with **wider channels** (multiplier 4 → 16 in `SE3ELayer`) and **longer fixed-t training** at low lr with explicit early-stop on a held-out noise sample. See *Other open problems* below.
+
 ## Denoise trajectory results
 
 ### Sampler bug found (commit `31b8307`)
