@@ -73,6 +73,9 @@ def main():
     ap.add_argument("--no-pretrain", action="store_true",
                     help="Skip loading pretrained encoder weights")
     ap.add_argument("--batch-size", type=int, default=1)
+    ap.add_argument("--save-folder", type=str, default=None,
+                    help="Save final checkpoint here. If None, no save. Format "
+                         "matches Trainer.save() — net_dict.state_dict() pickle.")
     args = ap.parse_args()
 
     torch.manual_seed(args.seed)
@@ -376,6 +379,21 @@ def main():
     print(f"  pred_p_rms  (mean):{_tail_mean('pred_p'):.3e}")
     print(f"  loss     (mean):   {_tail_mean('loss'):.3f}")
     print("\nLegend: ratio < 0.5 -> learning. cos|>| > 0.3 -> direction-aligned.")
+
+    # ----- Save final checkpoint in Trainer.save() format -----
+    if args.save_folder:
+        os.makedirs(args.save_folder, exist_ok=True)
+        last_step = args.max_batches
+        ckpt_name = f"ckpt-{last_step}.pt"
+        ckpt_path = os.path.join(args.save_folder, ckpt_name)
+        net_dict = {key: net.state_dict() for key, net in trainer.nets.items()}
+        torch.save(net_dict, ckpt_path)
+        idx_file = os.path.join(args.save_folder, "checkpoint")
+        with open(idx_file, "w") as f:
+            f.write(f"latest checkpoint:{ckpt_name}\n")
+            f.write(f"checkpoint file:{ckpt_name}\n\n")
+        print(f"\n[save] wrote {ckpt_path} ({os.path.getsize(ckpt_path)/1e6:.1f}MB)",
+              flush=True)
 
 
 if __name__ == "__main__":
