@@ -76,6 +76,9 @@ def main():
     ap.add_argument("--save-folder", type=str, default=None,
                     help="Save final checkpoint here. If None, no save. Format "
                          "matches Trainer.save() — net_dict.state_dict() pickle.")
+    ap.add_argument("--load-checkpoint", type=str, default=None,
+                    help="Resume from this ckpt-*.pt (warm start). Loads "
+                         "state_dict for whichever nets are present.")
     args = ap.parse_args()
 
     torch.manual_seed(args.seed)
@@ -121,6 +124,9 @@ def main():
     # crystal types the bottleneck?" by training on a single type.
     sys_prefix = os.environ.get("SYSTEM_ID_PREFIX")
     if sys_prefix:
+        # Comma-separated list of prefixes — keep records whose system_id
+        # startswith any of them.
+        prefixes = tuple(p.strip() for p in sys_prefix.split(",") if p.strip())
         import pickle
         for i, ds in enumerate(mixer._datasets):
             env = ds._get_env()
@@ -129,11 +135,11 @@ def main():
                 for k in ds._keys:
                     rec = pickle.loads(txn.get(k))
                     sid = rec.get("system_id", "")
-                    if isinstance(sid, str) and sid.startswith(sys_prefix):
+                    if isinstance(sid, str) and sid.startswith(prefixes):
                         keep.append(k)
             ds._keys = keep
             print(f"[fix-E] filtered dataset {i} '{mixer._names[i]}' to {len(keep)} records "
-                  f"matching system_id prefix '{sys_prefix}'", flush=True)
+                  f"matching prefixes {prefixes}", flush=True)
         # Recompute mixer's cumulative weights / lengths so sampling stays valid
         mixer._lengths = [len(ds) for ds in mixer._datasets]
         mixer._cum_lengths = np.cumsum([0] + mixer._lengths)
@@ -150,6 +156,15 @@ def main():
     )
     if not args.no_pretrain:
         trainer.load_unimol_pretrain(pretrain_f)
+    if args.load_checkpoint:
+        state = torch.load(args.load_checkpoint, map_location="cpu")
+        loaded = []
+        for k, v in state.items():
+            if k in trainer.nets:
+                trainer.nets[k].load_state_dict(v, strict=False)
+                loaded.append(k)
+        print(f"[warm-start] loaded {loaded} from {args.load_checkpoint}",
+              flush=True)
     for net in trainer.nets.values():
         net.to(DEVICE)
         net.train()
