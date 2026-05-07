@@ -1,0 +1,12 @@
+Record 0: num_atoms=287, positions_shape=(287, 3), atom_types_len=287, cm_unique={0, 1}, system_id=4eoh
+Record 1: num_atoms=477, positions_shape=(477, 3), atom_types_len=477, cm_unique={0, 1}, system_id=3zc5
+Record 2: num_atoms=241, positions_shape=(241, 3), atom_types_len=241, cm_unique={0, 1}, system_id=1e5a
+Record 3: num_atoms=515, positions_shape=(515, 3), atom_types_len=515, cm_unique={0, 1}, system_id=3neg
+Record 4: num_atoms=288, positions_shape=(288, 3), atom_types_len=288, cm_unique={0, 1}, system_id=2zgm
+
+Out of first 100 records:
+  has both 0 and 1: 100
+  only 0: 0
+  only 1: 0
+  empty/None mask: 0
+  zero atoms: 0

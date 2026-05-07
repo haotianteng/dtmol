@@ -1,0 +1,22 @@
+train rec 0: pes_tier=B, tid=10GS, tid_4char=True, cm_has_0=True, cm_has_1=True, cm_unique=[0, 1], water_stripped=True, ds=misato, pos_prev=False, pos_next=False
+train rec 1: pes_tier=B, tid=11GS, tid_4char=True, cm_has_0=True, cm_has_1=True, cm_unique=[0, 1], water_stripped=True, ds=misato, pos_prev=False, pos_next=False
+train rec 2: pes_tier=B, tid=1A0Q, tid_4char=True, cm_has_0=True, cm_has_1=True, cm_unique=[0, 1], water_stripped=True, ds=misato, pos_prev=False, pos_next=False
+train rec 3: pes_tier=B, tid=1AXS, tid_4char=True, cm_has_0=True, cm_has_1=True, cm_unique=[0, 1], water_stripped=True, ds=misato, pos_prev=False, pos_next=False
+train rec 4: pes_tier=B, tid=1MF4, tid_4char=True, cm_has_0=True, cm_has_1=True, cm_unique=[0, 1], water_stripped=True, ds=misato, pos_prev=False, pos_next=False
+  train: 15505 total records, 5 spot-checked OK
+
+valid rec 0: pes_tier=B, tid=1A1C, tid_4char=True, cm_has_0=True, cm_has_1=True, cm_unique=[0, 1], water_stripped=True, ds=misato, pos_prev=False, pos_next=False
+valid rec 1: pes_tier=B, tid=1A28, tid_4char=True, cm_has_0=True, cm_has_1=True, cm_unique=[0, 1], water_stripped=True, ds=misato, pos_prev=False, pos_next=False
+valid rec 2: pes_tier=B, tid=1AVP, tid_4char=True, cm_has_0=True, cm_has_1=True, cm_unique=[0, 1], water_stripped=True, ds=misato, pos_prev=False, pos_next=False
+valid rec 3: pes_tier=B, tid=1JQ3, tid_4char=True, cm_has_0=True, cm_has_1=True, cm_unique=[0, 1], water_stripped=True, ds=misato, pos_prev=False, pos_next=False
+valid rec 4: pes_tier=B, tid=4K43, tid_4char=True, cm_has_0=True, cm_has_1=True, cm_unique=[0, 1], water_stripped=True, ds=misato, pos_prev=False, pos_next=False
+  valid: 1941 total records, 5 spot-checked OK
+
+test rec 0: pes_tier=B, tid=1A07, tid_4char=True, cm_has_0=True, cm_has_1=True, cm_unique=[0, 1], water_stripped=True, ds=misato, pos_prev=False, pos_next=False
+test rec 1: pes_tier=B, tid=1A09, tid_4char=True, cm_has_0=True, cm_has_1=True, cm_unique=[0, 1], water_stripped=True, ds=misato, pos_prev=False, pos_next=False
+test rec 2: pes_tier=B, tid=1B40, tid_4char=True, cm_has_0=True, cm_has_1=True, cm_unique=[0, 1], water_stripped=True, ds=misato, pos_prev=False, pos_next=False
+test rec 3: pes_tier=B, tid=1K22, tid_4char=True, cm_has_0=True, cm_has_1=True, cm_unique=[0, 1], water_stripped=True, ds=misato, pos_prev=False, pos_next=False
+test rec 4: pes_tier=B, tid=4G8O, tid_4char=True, cm_has_0=True, cm_has_1=True, cm_unique=[0, 1], water_stripped=True, ds=misato, pos_prev=False, pos_next=False
+  test: 1936 total records, 5 spot-checked OK
+
+AC2 spot-check: ALL PASS

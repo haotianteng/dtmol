@@ -1,0 +1,10 @@
+train[0]: ds=pdbbind, tier=C, forces=None, num_atoms=287, cm_has_both=True, sys_id=4eoh
+train[1]: ds=pdbbind, tier=C, forces=None, num_atoms=477, cm_has_both=True, sys_id=3zc5
+train[2]: ds=pdbbind, tier=C, forces=None, num_atoms=241, cm_has_both=True, sys_id=1e5a
+valid[0]: ds=pdbbind, tier=C, forces=None, num_atoms=417, cm_has_both=True, sys_id=3oy0
+valid[1]: ds=pdbbind, tier=C, forces=None, num_atoms=393, cm_has_both=True, sys_id=4gqr
+valid[2]: ds=pdbbind, tier=C, forces=None, num_atoms=371, cm_has_both=True, sys_id=3p4r
+test[0]: ds=pdbbind, tier=C, forces=None, num_atoms=439, cm_has_both=True, sys_id=1p1n
+test[1]: ds=pdbbind, tier=C, forces=None, num_atoms=387, cm_has_both=True, sys_id=3rr4
+test[2]: ds=pdbbind, tier=C, forces=None, num_atoms=520, cm_has_both=True, sys_id=2xb8
+ALL SPOT-CHECKS PASSED

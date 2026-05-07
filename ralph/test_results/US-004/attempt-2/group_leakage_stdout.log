@@ -1,0 +1,18 @@
+Focused check on g002 (was failing case in attempt-1):
+  train: {(6, 8): 22, (17, 17): 180}
+  valid: {(7, 7): 201}
+  test: {(9, 9): 160}
+
+Also checking g004, g006, g010 (other failure groups from attempt-1):
+  Group g004:
+    train: 5 unique species, 1800 conformations
+    valid: 3 unique species, 317 conformations
+    test: 2 unique species, 1202 conformations
+  Group g006:
+    train: 1 unique species, 18000 conformations
+    valid: 1 unique species, 13 conformations
+    test: 8 unique species, 6878 conformations
+  Group g010:
+    train: 96 unique species, 179998 conformations
+    valid: 40 unique species, 83837 conformations
+    test: 41 unique species, 96480 conformations

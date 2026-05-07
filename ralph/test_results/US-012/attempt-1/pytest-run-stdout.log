@@ -1,0 +1,11 @@
+============================= test session starts ==============================
+platform linux -- Python 3.8.13, pytest-8.3.5, pluggy-1.5.0 -- /home/haotiant/conda/envs/dtmol/bin/python3
+cachedir: .pytest_cache
+rootdir: /home/haotiant/Projects/CMU/dtmol
+plugins: anyio-4.3.0
+collecting ... collected 2 items
+
+dtmol/data/tests/test_fixtures.py::test_data_root_is_path PASSED         [ 50%]
+dtmol/data/tests/test_fixtures.py::test_unified_config_fields PASSED     [100%]
+
+============================== 2 passed in 0.84s ===============================

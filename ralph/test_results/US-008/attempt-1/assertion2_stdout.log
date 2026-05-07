@@ -1,0 +1,14 @@
+pes_tier=B
+trajectory_id=10GS
+dataset_source=misato
+num_atoms=59
+atom_types=[7 6 6 8 6]...
+component_mask=[1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1
+ 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1]
+forces=None
+energy=None
+positions shape=(59, 3)
+positions_prev=None
+positions_next=None
+All keys: ['atom_types', 'binding_affinity', 'component_mask', 'dataset_source', 'dipole', 'energy', 'forces', 'homo', 'lumo', 'neighbor_list', 'noise_level', 'noise_target', 'num_atoms', 'partial_charges', 'pes_tier', 'pocket_mask', 'positions', 'positions_next', 'positions_prev', 'relative_energy', 'system_id', 'timestep', 'trajectory_id']
+OK

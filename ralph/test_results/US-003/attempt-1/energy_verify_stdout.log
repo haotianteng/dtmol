@@ -1,0 +1,4 @@
+CSV headers: ['mol_id', 'A', 'B', 'C', 'mu', 'alpha', 'homo', 'lumo', 'gap', 'r2', 'zpve', 'u0', 'u298', 'h298', 'g298', 'cv', 'u0_atom', 'u298_atom', 'h298_atom', 'g298_atom']
+gdb_1: u0_raw=-40.478930 Hartree, u0_eV=-1101.49 eV
+gdb_2: u0_raw=-56.525887 Hartree, u0_eV=-1538.15 eV
+gdb_3: u0_raw=-76.404702 Hartree, u0_eV=-2079.08 eV

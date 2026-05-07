@@ -1,0 +1,4 @@
+partial_charges shape: (27,)
+partial_charges dtype: float64
+num_atoms: 27
+PASS: partial_charges properly squeezed

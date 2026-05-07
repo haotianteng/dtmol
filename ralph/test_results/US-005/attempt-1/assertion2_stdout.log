@@ -1,0 +1,5 @@
+PASS: pes_tier=A, forces not None
+forces shape: (27, 3)
+energy: -10080.027046789908
+dataset_source: spice2
+Record keys: ['atom_types', 'binding_affinity', 'component_mask', 'dataset_source', 'dipole', 'energy', 'forces', 'homo', 'lumo', 'neighbor_list', 'noise_level', 'noise_target', 'num_atoms', 'partial_charges', 'pes_tier', 'pocket_mask', 'positions', 'positions_next', 'positions_prev', 'relative_energy', 'system_id', 'timestep', 'trajectory_id']

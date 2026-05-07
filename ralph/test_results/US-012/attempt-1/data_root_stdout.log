@@ -1,0 +1,3 @@
+With env var: /tmp/test_root
+Without env var: /data/dtMol_Project/datasets
+PASS: data_root logic works correctly

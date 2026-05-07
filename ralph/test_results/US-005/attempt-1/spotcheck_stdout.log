@@ -1,0 +1,19 @@
+train: 890,633 records
+  [train][0] natoms=27, energy=-10080.03 eV, fmax=1.83 eV/A, charges=True
+  [train][1] natoms=27, energy=-10079.67 eV, fmax=2.16 eV/A, charges=True
+  [train][2] natoms=27, energy=-10079.71 eV, fmax=1.26 eV/A, charges=True
+  [train][3] natoms=32, energy=-15727.20 eV, fmax=2.53 eV/A, charges=True
+  [train][4] natoms=47, energy=-66088.11 eV, fmax=1.74 eV/A, charges=True
+valid: 107,516 records
+  [valid][0] natoms=33, energy=-19143.49 eV, fmax=1.97 eV/A, charges=True
+  [valid][1] natoms=33, energy=-19144.21 eV, fmax=2.19 eV/A, charges=True
+  [valid][2] natoms=33, energy=-19144.74 eV, fmax=1.47 eV/A, charges=True
+  [valid][3] natoms=42, energy=-24382.16 eV, fmax=2.33 eV/A, charges=True
+  [valid][4] natoms=46, energy=-39001.13 eV, fmax=1.24 eV/A, charges=True
+test: 112,016 records
+  [test][0] natoms=39, energy=-30340.49 eV, fmax=2.99 eV/A, charges=True
+  [test][1] natoms=39, energy=-30340.73 eV, fmax=2.81 eV/A, charges=True
+  [test][2] natoms=39, energy=-30340.82 eV, fmax=3.08 eV/A, charges=True
+  [test][3] natoms=29, energy=-33507.90 eV, fmax=3.09 eV/A, charges=True
+  [test][4] natoms=46, energy=-46433.09 eV, fmax=1.82 eV/A, charges=True
+Total: 1,110,165 records

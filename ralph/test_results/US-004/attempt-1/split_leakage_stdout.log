@@ -1,0 +1,7 @@
+train: sampled 4 unique molecule groups from first 1000 records
+valid: sampled 4 unique molecule groups from first 1000 records
+test: sampled 4 unique molecule groups from first 1000 records
+train-valid overlap: 4 groups: ['g004', 'g006', 'g002', 'g010']
+train-test overlap: 4 groups: ['g004', 'g006', 'g002', 'g010']
+valid-test overlap: 4 groups: ['g004', 'g006', 'g002', 'g010']
+WARNING: molecule group overlap detected between splits

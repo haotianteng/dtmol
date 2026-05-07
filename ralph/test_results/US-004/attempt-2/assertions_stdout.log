@@ -1,0 +1,4 @@
+Assertion 1: unified dir exists - PASS
+Assertion 2: pes_tier=A, forces shape OK, energy<0, dataset_source=ani2x - PASS
+Record counts: train=6851321, valid=832094, test=965322, total=8648737
+First record: energy=-3082.47 eV, forces max=7.7035 eV/A, forces shape=(2, 3)

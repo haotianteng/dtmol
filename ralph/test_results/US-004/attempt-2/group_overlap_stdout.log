@@ -1,0 +1,4 @@
+g002: train=3, valid=1, test=1, overlaps=0 PASS 
+g004: train=8, valid=3, test=3, overlaps=0 PASS 
+g006: train=24, valid=5, test=8, overlaps=0 PASS 
+g010: train=256, valid=40, test=41, overlaps=0 PASS 

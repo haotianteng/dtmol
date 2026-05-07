@@ -1,0 +1,18 @@
+train: 15530 records
+  train[0]: tid=10GS (len=4), cm_has_0=False, cm_has_1=True, pos_prev=False, pos_next=False, atoms=59, energy=None, homo=-10.309399604797363, lumo=-6.097400188446045, charges=True
+  train[1]: tid=11GS (len=4), cm_has_0=False, cm_has_1=True, pos_prev=False, pos_next=False, atoms=66, energy=None, homo=-10.269700050354004, lumo=-7.8059000968933105, charges=True
+  train[2]: tid=1A0Q (len=4), cm_has_0=False, cm_has_1=True, pos_prev=False, pos_next=False, atoms=43, energy=None, homo=-10.459799766540527, lumo=-5.530399799346924, charges=True
+  train[3]: tid=1AXR (len=4), cm_has_0=False, cm_has_1=True, pos_prev=False, pos_next=False, atoms=25, energy=None, homo=-11.626700401306152, lumo=-6.401100158691406, charges=True
+  train[4]: tid=1ME8 (len=4), cm_has_0=False, cm_has_1=True, pos_prev=False, pos_next=False, atoms=32, energy=None, homo=-12.531599998474121, lumo=-11.876199722290039, charges=True
+valid: 1941 records
+  valid[0]: tid=1A1C (len=4), cm_has_0=False, cm_has_1=True, pos_prev=False, pos_next=False, atoms=73, energy=None, homo=-10.134200096130371, lumo=-5.524499893188477, charges=True
+  valid[1]: tid=1A28 (len=4), cm_has_0=False, cm_has_1=True, pos_prev=False, pos_next=False, atoms=53, energy=None, homo=-10.876199722290039, lumo=-6.766900062561035, charges=True
+  valid[2]: tid=1AVP (len=4), cm_has_0=False, cm_has_1=True, pos_prev=False, pos_next=False, atoms=198, energy=None, homo=-10.469900131225586, lumo=-6.416399955749512, charges=True
+  valid[3]: tid=1JQ3 (len=4), cm_has_0=False, cm_has_1=True, pos_prev=False, pos_next=False, atoms=62, energy=None, homo=-10.650500297546387, lumo=-6.776100158691406, charges=True
+  valid[4]: tid=4K43 (len=4), cm_has_0=False, cm_has_1=True, pos_prev=False, pos_next=False, atoms=85, energy=None, homo=-10.601799964904785, lumo=-6.433000087738037, charges=True
+test: 1942 records
+  test[0]: tid=1A07 (len=4), cm_has_0=False, cm_has_1=True, pos_prev=False, pos_next=False, atoms=74, energy=None, homo=-10.558199882507324, lumo=-5.728499889373779, charges=True
+  test[1]: tid=1A09 (len=4), cm_has_0=False, cm_has_1=True, pos_prev=False, pos_next=False, atoms=82, energy=None, homo=-10.231200218200684, lumo=-5.623600006103516, charges=True
+  test[2]: tid=1AZG (len=4), cm_has_0=False, cm_has_1=True, pos_prev=False, pos_next=False, atoms=207, energy=None, homo=-10.348699569702148, lumo=-6.130799770355225, charges=True
+  test[3]: tid=1JOJ (len=4), cm_has_0=False, cm_has_1=True, pos_prev=False, pos_next=False, atoms=127, energy=None, homo=-10.088399887084961, lumo=-6.317200183868408, charges=True
+  test[4]: tid=4G17 (len=4), cm_has_0=False, cm_has_1=True, pos_prev=False, pos_next=False, atoms=40, energy=None, homo=-10.19379997253418, lumo=-6.862500190734863, charges=True

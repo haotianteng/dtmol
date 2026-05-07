@@ -1,0 +1,13 @@
+UniMol split LMDBs exist: True
+  dict_mol.txt
+  dict_pkt.txt
+  CASF-2016
+  train.lmdb-lock
+  valid.lmdb
+  cache
+  Readme.txt
+  test.lmdb
+  train.lmdb
+Single pdbbind.lmdb exists: True
+  lock.mdb
+  data.mdb

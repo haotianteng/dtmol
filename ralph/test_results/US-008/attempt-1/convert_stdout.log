@@ -1,0 +1,12 @@
+INFO: Found 19413 PDB groups in /data/dtMol_Project/datasets/MISATO/QM.hdf5
+INFO: Processed 2000/19413 complexes (train=1598, valid=204, test=198)
+INFO: Processed 4000/19413 complexes (train=3205, valid=404, test=391)
+INFO: Processed 6000/19413 complexes (train=4805, valid=590, test=605)
+INFO: Processed 8000/19413 complexes (train=6416, valid=775, test=809)
+INFO: Processed 10000/19413 complexes (train=8046, valid=942, test=1012)
+INFO: Processed 12000/19413 complexes (train=9619, valid=1173, test=1208)
+INFO: Processed 14000/19413 complexes (train=11213, valid=1373, test=1414)
+INFO: Processed 16000/19413 complexes (train=12839, valid=1569, test=1592)
+INFO: Processed 18000/19413 complexes (train=14411, valid=1792, test=1797)
+INFO: Wrote 19413 total records — train: 15530, valid: 1941, test: 1942 (skipped 0 dedup, 0 errors)
+INFO: Done.

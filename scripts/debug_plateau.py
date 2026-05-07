@@ -109,7 +109,16 @@ def main():
     tr_sampler = TranslationSampler(schedular=LogLinearScheduler(T, 0.1, 19.0), sde_format="VE")
     g_sampler = GaussianSampler(schedular=LogLinearScheduler(T, 0.04, 1.5), sde_format="VE")
     g_sampler2 = GaussianSampler(schedular=LogLinearScheduler(T, 0.04, 1.5), sde_format="VE")
-    molecule_sampler = ChainSampler(rot_sampler).compose(tr_sampler).compose(g_sampler)
+    # PERTURB_ONLY=1: build the molecule diffusion as pure Gaussian (no
+    # rotation, no translation). The trrot head supervised target is then
+    # zero on every step, so the perturbation head only has to predict
+    # per-atom Gaussian noise — exactly what it's geometrically suited for.
+    if os.environ.get("PERTURB_ONLY", "0") == "1":
+        molecule_sampler = ChainSampler(g_sampler)
+        print("[mode] PERTURB_ONLY: molecule diffusion = GaussianSampler only "
+              "(no rot/translation)", flush=True)
+    else:
+        molecule_sampler = ChainSampler(rot_sampler).compose(tr_sampler).compose(g_sampler)
     protein_sampler = ChainSampler(g_sampler2)
     protein_sampler.conjugate(molecule_sampler)
 
@@ -241,6 +250,10 @@ def main():
         "ratio_tr": [], "ratio_p": [], "cos_tr": [], "cos_p": [],
         "pred_tr": [], "pred_p": [], "loss": [],
     }
+    # Track best snapshot by trailing-window ratio_p
+    periodic_best = None  # tuple (step, ratio_p, deepcopied state) when --save-folder set
+    best_check_every = 100
+    best_window = 100
 
     t0 = time.time()
     def _loop():
@@ -375,6 +388,20 @@ def main():
         if i % 10 == 0 and DEVICE.startswith("cuda"):
             torch.cuda.empty_cache()
 
+        # Periodically snapshot best model by trailing ratio_p
+        if (args.save_folder and i >= best_window
+                and (i + 1) % best_check_every == 0):
+            tail = [v for v in history["ratio_p"][-best_window:] if v == v]
+            if tail:
+                cur = sum(tail) / len(tail)
+                if periodic_best is None or cur < periodic_best[1]:
+                    snap = {key: {k: v.detach().cpu().clone()
+                                  for k, v in net.state_dict().items()}
+                            for key, net in trainer.nets.items()}
+                    periodic_best = (i + 1, cur, snap)
+                    print(f"[best] step {i+1}: trailing ratio_p={cur:.4f} (new best)",
+                          flush=True)
+
     # ----- Aggregate over last K steps -----
     K = max(1, min(50, len(history["ratio_tr"])))
     def _tail_mean(name: str) -> float:
@@ -409,6 +436,18 @@ def main():
             f.write(f"checkpoint file:{ckpt_name}\n\n")
         print(f"\n[save] wrote {ckpt_path} ({os.path.getsize(ckpt_path)/1e6:.1f}MB)",
               flush=True)
+        # Track best aggregate ratio_p over training and save best ckpt too
+        # (re-evaluate by sliding window of 100 last steps)
+        if periodic_best is not None:
+            best_step, best_ratio_p, best_state = periodic_best
+            best_ckpt = os.path.join(args.save_folder,
+                                      f"ckpt-best-step{best_step}.pt")
+            torch.save(best_state, best_ckpt)
+            with open(idx_file, "a") as f:
+                f.write(f"best ratio_p: {best_ratio_p:.4f} at step {best_step}\n")
+                f.write(f"best checkpoint:ckpt-best-step{best_step}.pt\n")
+            print(f"[save] best ckpt at step {best_step} "
+                  f"(ratio_p={best_ratio_p:.4f}) -> {best_ckpt}", flush=True)
 
 
 if __name__ == "__main__":

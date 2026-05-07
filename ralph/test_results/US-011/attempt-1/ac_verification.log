@@ -1,0 +1,17 @@
+pdbbind: weight 0.25 OK
+misato: weight 0.2 OK
+ani2x: weight 0.15 OK
+spice2: weight 0.15 OK
+qm9: weight 0.1 OK
+irc: weight 0.1 OK
+pdb_apo: weight 0.05 OK
+pdbbind: path OK (/data/dtMol_Project/datasets/PDBBind/unified/train.lmdb)
+misato: path OK (/data/dtMol_Project/datasets/MISATO/unified/train.lmdb)
+ani2x: path OK (/data/dtMol_Project/datasets/ANI-2x/unified/train.lmdb)
+spice2: path OK (/data/dtMol_Project/datasets/SPICE2/unified/train.lmdb)
+qm9: path OK (/data/dtMol_Project/datasets/QM9/unified/train.lmdb)
+irc: path OK (/data/dtMol_Project/datasets/Transition1x/unified/train.lmdb)
+pdb_apo: path OK (/data/dtMol_Project/datasets/PDB_apo/unified/train.lmdb)
+MISATO frame_stride: 10 OK
+Val weights sum: 1.0 OK
+ALL ACs VERIFIED

@@ -306,6 +306,10 @@ def main():
     ap.add_argument("--system-id-prefix", required=True,
                     help="Prefix to match in test.lmdb (e.g. fcc_Al_2x2x2)")
     ap.add_argument("--test-lmdb", default="/data/dtMol_Project/datasets/unit_cell_synthesized/test.lmdb")
+    ap.add_argument("--use-train-lmdb", action="store_true",
+                    help="Eval on a record from train.lmdb instead of test "
+                         "(checks whether the model has learned at all on the "
+                         "data it actually saw).")
     ap.add_argument("--out-dir", required=True)
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     ap.add_argument("--t-targets", type=int, nargs="+", default=[100, 300, 500, 800])
@@ -318,6 +322,11 @@ def main():
     ap.add_argument("--mode", choices=["ddim", "tweedie"], default="ddim",
                     help="Reverse-step rule: deterministic ODE Euler (ddim) "
                          "or repeated Tweedie jump (tweedie).")
+    ap.add_argument("--eval-in-train-mode", action="store_true", default=False,
+                    help="Run nets in .train() (with dropout disabled) so "
+                         "BatchNorm uses batch statistics instead of stale "
+                         "running stats. Use this when running stats from "
+                         "a short training run are unreliable.")
     args = ap.parse_args()
 
     logging.basicConfig(level=logging.WARNING)
@@ -338,13 +347,25 @@ def main():
             nets[k].load_state_dict(v, strict=False)
     for net in nets.values():
         net.to(args.device)
-        net.eval()
-    print(f"[eval] loaded {list(state.keys())}", flush=True)
+        if args.eval_in_train_mode:
+            net.train()
+            for m in net.modules():
+                if isinstance(m, torch.nn.Dropout):
+                    m.p = 0.0
+        else:
+            net.eval()
+    print(f"[eval] loaded {list(state.keys())} "
+          f"(mode={'train+nodrop' if args.eval_in_train_mode else 'eval'})",
+          flush=True)
 
     samplers = build_samplers(T=1000)
     ds_config = UnifiedDatasetConfig(max_seq_len=1000, max_pocket_atoms=256, seed=0)
+    lmdb_path = args.test_lmdb
+    if args.use_train_lmdb:
+        lmdb_path = lmdb_path.replace("test.lmdb", "train.lmdb")
+        print(f"[eval] using TRAIN lmdb: {lmdb_path}", flush=True)
     ds = UnifiedDataset(
-        lmdb_path=args.test_lmdb,
+        lmdb_path=lmdb_path,
         ligand_dict=atom_dict["ligand_dict"],
         protein_dict=atom_dict["protein_dict"],
         config=ds_config,

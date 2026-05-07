@@ -1,0 +1,4 @@
+train: 15505 records
+valid: 1941 records
+test: 1936 records
+Total: 19382

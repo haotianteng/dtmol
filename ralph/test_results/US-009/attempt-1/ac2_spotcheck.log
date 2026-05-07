@@ -1,0 +1,39 @@
+=== train (80 records) ===
+  key: b'0'
+  fields: ['atom_types', 'binding_affinity', 'component_mask', 'dataset_source', 'dipole', 'energy', 'forces', 'homo', 'lumo', 'neighbor_list', 'noise_level', 'noise_target', 'num_atoms', 'partial_charges', 'pes_tier', 'pocket_mask', 'positions', 'positions_next', 'positions_prev', 'relative_energy', 'system_id', 'timestep', 'trajectory_id']
+  pes_tier: C
+  dataset_source: pdb_apo
+  forces: None
+  energy: None
+  component_mask unique: [0]
+  component_mask all_zero: True
+  num_atoms: 1722
+  atom_types min/max: 6/17
+  has_hydrogen (Z=1 or Z=2): False
+
+=== valid (10 records) ===
+  key: b'0'
+  fields: ['atom_types', 'binding_affinity', 'component_mask', 'dataset_source', 'dipole', 'energy', 'forces', 'homo', 'lumo', 'neighbor_list', 'noise_level', 'noise_target', 'num_atoms', 'partial_charges', 'pes_tier', 'pocket_mask', 'positions', 'positions_next', 'positions_prev', 'relative_energy', 'system_id', 'timestep', 'trajectory_id']
+  pes_tier: C
+  dataset_source: pdb_apo
+  forces: None
+  energy: None
+  component_mask unique: [0]
+  component_mask all_zero: True
+  num_atoms: 1102
+  atom_types min/max: 6/16
+  has_hydrogen (Z=1 or Z=2): False
+
+=== test (10 records) ===
+  key: b'0'
+  fields: ['atom_types', 'binding_affinity', 'component_mask', 'dataset_source', 'dipole', 'energy', 'forces', 'homo', 'lumo', 'neighbor_list', 'noise_level', 'noise_target', 'num_atoms', 'partial_charges', 'pes_tier', 'pocket_mask', 'positions', 'positions_next', 'positions_prev', 'relative_energy', 'system_id', 'timestep', 'trajectory_id']
+  pes_tier: C
+  dataset_source: pdb_apo
+  forces: None
+  energy: None
+  component_mask unique: [0]
+  component_mask all_zero: True
+  num_atoms: 3867
+  atom_types min/max: 6/16
+  has_hydrogen (Z=1 or Z=2): False
+

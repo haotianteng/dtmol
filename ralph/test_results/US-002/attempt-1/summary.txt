@@ -1,0 +1,24 @@
+US-002 Test Results — Attempt 1
+================================
+
+Test Assertions:
+1. test -d /data/dtMol_Project/datasets/ANI-2x       — PASS (exit 0)
+2. test -d /data/dtMol_Project/datasets/SPICE2        — PASS (exit 0)
+3. test -d /data/dtMol_Project/datasets/Transition1x  — PASS (exit 0)
+4. test -d /data/dtMol_Project/datasets/PDB_apo       — PASS (exit 0)
+5. test -d /data/dtMol_Project/datasets/MISATO        — PASS (exit 0)
+6. --check exits 0 with all 7 FOUND                   — PASS (exit 0)
+
+Acceptance Criteria:
+AC1: --all downloads all 5 auto-downloadable datasets  — PASS (all present, skipped)
+AC2: --check shows all 7 as FOUND                      — PASS (see check_stdout.log)
+AC3: Expected file formats present:
+     - ANI-2x: ANI-2x-wB97X-631Gd.h5 (in final_h5/ subdir)  — PASS
+     - SPICE2: SPICE-1.1.4.hdf5                               — PASS
+     - Transition1x: Transition1x.h5                           — PASS
+     - PDB_apo: 100+ .pdb files                               — PASS
+     - MISATO: QM.hdf5                                         — PASS
+AC4: QM9 and PDBBind detected and skipped              — PASS (see all_stdout.log)
+AC5: Typecheck passes                                  — PASS (mypy exit 0)
+
+VERDICT: TEST_PASSED

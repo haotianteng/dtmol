@@ -1,0 +1,26 @@
+usage: download.py [-h] [--data-root DATA_ROOT]
+                   [--source {qm9,pdbbind,ani2x,spice2,transition1x,pdb_apo,misato}]
+                   [--all] [--check] [--misato-md] [--pdb-list PDB_LIST]
+
+Download and manage dtMol project datasets.
+
+options:
+  -h, --help            show this help message and exit
+  --data-root DATA_ROOT
+                        Root directory for all datasets (default:
+                        /data/dtMol_Project/datasets)
+  --source {qm9,pdbbind,ani2x,spice2,transition1x,pdb_apo,misato}
+                        Download a single dataset by name
+  --all                 Download all auto-downloadable datasets
+  --check               Scan data-root and print FOUND/MISSING status for all
+                        datasets
+  --misato-md           Include MISATO MD trajectory (~133GB) — requires
+                        confirmation
+  --pdb-list PDB_LIST   File with PDB IDs for apo download (one per line),
+                        overrides built-in list
+
+Examples:
+  python -m dtmol.data.download --check
+  python -m dtmol.data.download --source ani2x
+  python -m dtmol.data.download --all
+  python -m dtmol.data.download --all --misato-md

@@ -1,0 +1,16 @@
+STDOUT: ============================= test session starts ==============================
+platform linux -- Python 3.8.13, pytest-8.3.5, pluggy-1.5.0 -- /home/haotiant/conda/envs/dtmol/bin/python3
+cachedir: .pytest_cache
+rootdir: /home/haotiant/Projects/CMU/dtmol
+plugins: anyio-4.3.0
+collecting ... collected 4 items
+
+dtmol/data/tests/test_tmp_fixtures_check.py::test_ligand PASSED          [ 25%]
+dtmol/data/tests/test_tmp_fixtures_check.py::test_protein PASSED         [ 50%]
+dtmol/data/tests/test_tmp_fixtures_check.py::test_diffusion PASSED       [ 75%]
+dtmol/data/tests/test_tmp_fixtures_check.py::test_config PASSED          [100%]
+
+============================== 4 passed in 0.94s ===============================
+
+STDERR: 
+EXIT CODE: 0

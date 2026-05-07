@@ -1,0 +1,7 @@
+Total records: 15505
+Unique trajectory IDs: 15505
+Multi-frame trajectories: 0
+Records with positions_prev: 0
+Records with positions_next: 0
+
+AC3: PASS (vacuously true - all records are single-snapshot, zero non-boundary frames)

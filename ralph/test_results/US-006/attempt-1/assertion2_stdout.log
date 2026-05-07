@@ -1,0 +1,8 @@
+pes_tier=A
+trajectory_id=C2H2N2O2/rxn3534
+dataset_source=irc
+forces shape=(8, 3)
+energy=-249700.99168683236
+timestep=0
+relative_energy=0.0
+OK

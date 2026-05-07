@@ -1,0 +1,6 @@
+records: 7721349. OK
+dataset_source: ani2x
+energy: -3082.468578094423
+forces shape: (2, 3)
+forces sample: [[-0.         -0.          7.70349638]
+ [-0.         -0.         -7.70349638]]

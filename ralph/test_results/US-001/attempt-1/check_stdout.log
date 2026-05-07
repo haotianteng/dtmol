@@ -1,0 +1,13 @@
+
+Dataset status in: /data/dtMol_Project/datasets
+
+Dataset         Status     Directory                      Size            Auto-DL
+--------------------------------------------------------------------------------
+qm9             FOUND      QM9                            575.6 MB        No (manual)
+pdbbind         FOUND      PDBBind                        33.0 GB         No (manual)
+ani2x           MISSING    ANI-2x                         -               Yes
+spice2          MISSING    SPICE2                         -               Yes
+transition1x    MISSING    Transition1x                   -               Yes
+pdb_apo         FOUND      PDB_apo                        5.4 MB          Yes
+misato          MISSING    MISATO                         -               Yes
+

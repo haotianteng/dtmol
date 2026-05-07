@@ -1,0 +1,15 @@
+============================= test session starts ==============================
+platform linux -- Python 3.8.13, pytest-8.3.5, pluggy-1.5.0
+rootdir: /home/haotiant/Projects/CMU/dtmol
+plugins: anyio-4.3.0
+collected 2 items
+
+<Dir dtmol>
+  <Package dtmol>
+    <Package data>
+      <Package tests>
+        <Module test_fixtures.py>
+          <Function test_data_root_is_path>
+          <Function test_unified_config_fields>
+
+========================== 2 tests collected in 0.01s ==========================

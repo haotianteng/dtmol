@@ -1,0 +1,30 @@
+dtmol/data/tests/test_unified_dataset.py::TestCollation::test_collated_shapes_consistent[ANI-2x] PASSED [ 92%]
+dtmol/data/tests/test_unified_dataset.py::TestCollation::test_collated_shapes_consistent[Transition1x] PASSED [ 93%]
+dtmol/data/tests/test_unified_dataset.py::TestCollation::test_collated_shapes_consistent[SPICE2] PASSED [ 93%]
+dtmol/data/tests/test_unified_dataset.py::TestCollation::test_collated_shapes_consistent[PDBBind] PASSED [ 94%]
+dtmol/data/tests/test_unified_dataset.py::TestCollation::test_collated_shapes_consistent[MISATO] PASSED [ 95%]
+dtmol/data/tests/test_unified_dataset.py::TestCollation::test_collated_shapes_consistent[PDB_apo] PASSED [ 95%]
+dtmol/data/tests/test_unified_dataset.py::TestCollation::test_collated_distances_finite[QM9] PASSED [ 96%]
+dtmol/data/tests/test_unified_dataset.py::TestCollation::test_collated_distances_finite[ANI-2x] PASSED [ 96%]
+dtmol/data/tests/test_unified_dataset.py::TestCollation::test_collated_distances_finite[Transition1x] PASSED [ 97%]
+dtmol/data/tests/test_unified_dataset.py::TestCollation::test_collated_distances_finite[SPICE2] PASSED [ 98%]
+dtmol/data/tests/test_unified_dataset.py::TestCollation::test_collated_distances_finite[PDBBind] PASSED [ 98%]
+dtmol/data/tests/test_unified_dataset.py::TestCollation::test_collated_distances_finite[MISATO] PASSED [ 99%]
+dtmol/data/tests/test_unified_dataset.py::TestCollation::test_collated_distances_finite[PDB_apo] PASSED [100%]
+
+=============================== warnings summary ===============================
+../../../conda/envs/dtmol/lib/python3.8/site-packages/wandb/sdk/launch/builder/build.py:11
+  /home/haotiant/conda/envs/dtmol/lib/python3.8/site-packages/wandb/sdk/launch/builder/build.py:11: DeprecationWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html
+    import pkg_resources
+
+../../../conda/envs/dtmol/lib/python3.8/site-packages/pkg_resources/__init__.py:2871
+  /home/haotiant/conda/envs/dtmol/lib/python3.8/site-packages/pkg_resources/__init__.py:2871: DeprecationWarning: Deprecated call to `pkg_resources.declare_namespace('mpl_toolkits')`.
+  Implementing implicit namespace packages (as specified in PEP 420) is preferred to `pkg_resources.declare_namespace`. See https://setuptools.pypa.io/en/latest/references/keywords.html#keyword-namespace-packages
+    declare_namespace(pkg)
+
+dtmol/data/tests/test_train_integration.py: 112 warnings
+  /home/haotiant/conda/envs/dtmol/lib/python3.8/site-packages/torch/jit/_check.py:177: UserWarning: The TorchScript type system doesn't support instance-level annotations on empty non-base types in `__init__`. Instead, either 1) use a type annotation in the class body, or 2) wrap the type in `torch.jit.Attribute`.
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========== 154 passed, 8 skipped, 114 warnings in 132.74s (0:02:12) ===========

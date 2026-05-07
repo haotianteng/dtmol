@@ -1,0 +1,9 @@
+Checking molecule-level splitting (data leakage test)...
+Sampling up to 100K records per split...
+Sampled: train=100000, valid=100000, test=100000
+Unique molecules: train=61, valid=61, test=67
+Train-Valid overlap: 0 molecules
+Train-Test overlap: 0 molecules
+Valid-Test overlap: 0 molecules
+NO DATA LEAKAGE DETECTED - molecule-level splitting is correct
+PASS

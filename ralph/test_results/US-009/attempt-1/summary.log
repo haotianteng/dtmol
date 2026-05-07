@@ -1,0 +1,14 @@
+=== US-009 Test Summary ===
+Date: Sun 12 Apr 2026 09:55:46 AM EDT
+
+AC1: PASS - train.lmdb (80 records), valid.lmdb (10 records), test.lmdb (10 records) at /data/dtMol_Project/datasets/PDB_apo/unified/
+AC2: PASS - pes_tier='C', component_mask all zeros, forces=None, energy=None, dataset_source='pdb_apo' across all splits
+AC3: PASS - mypy: Success: no issues found in 1 source file
+
+Test Assertion 1: PASS - unified dir exists
+Test Assertion 2: PASS - pes_tier=='C' and component_mask all zeros confirmed
+
+Additional checks:
+- No hydrogen atoms found (atom_types min Z=6, no Z=1 or Z=2)
+- 100 total records (80/10/10 split)
+VERDICT: TEST_PASSED

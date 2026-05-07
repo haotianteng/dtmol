@@ -1,0 +1,44 @@
+============================= test session starts ==============================
+platform linux -- Python 3.8.13, pytest-8.3.5, pluggy-1.5.0 -- /home/haotiant/conda/envs/dtmol/bin/python3
+cachedir: .pytest_cache
+rootdir: /home/haotiant/Projects/CMU/dtmol
+plugins: anyio-4.3.0
+collecting ... collected 35 items
+
+dtmol/data/tests/test_converters_real.py::TestSchemaValidation::test_validate_record[QM9] PASSED [  2%]
+dtmol/data/tests/test_converters_real.py::TestSchemaValidation::test_validate_record[ANI-2x] PASSED [  5%]
+dtmol/data/tests/test_converters_real.py::TestSchemaValidation::test_validate_record[SPICE2] PASSED [  8%]
+dtmol/data/tests/test_converters_real.py::TestSchemaValidation::test_validate_record[Transition1x] PASSED [ 11%]
+dtmol/data/tests/test_converters_real.py::TestSchemaValidation::test_validate_record[PDBBind] PASSED [ 14%]
+dtmol/data/tests/test_converters_real.py::TestSchemaValidation::test_validate_record[MISATO] PASSED [ 17%]
+dtmol/data/tests/test_converters_real.py::TestSchemaValidation::test_validate_record[PDB_apo] PASSED [ 20%]
+dtmol/data/tests/test_converters_real.py::TestQM9::test_dataset_source PASSED [ 22%]
+dtmol/data/tests/test_converters_real.py::TestQM9::test_pes_tier PASSED  [ 25%]
+dtmol/data/tests/test_converters_real.py::TestQM9::test_energy_range PASSED [ 28%]
+dtmol/data/tests/test_converters_real.py::TestQM9::test_homo_lt_lumo PASSED [ 31%]
+dtmol/data/tests/test_converters_real.py::TestQM9::test_forces_none PASSED [ 34%]
+dtmol/data/tests/test_converters_real.py::TestQM9::test_num_atoms PASSED [ 37%]
+dtmol/data/tests/test_converters_real.py::TestANI2x::test_dataset_source PASSED [ 40%]
+dtmol/data/tests/test_converters_real.py::TestANI2x::test_forces_present PASSED [ 42%]
+dtmol/data/tests/test_converters_real.py::TestANI2x::test_force_magnitude PASSED [ 45%]
+dtmol/data/tests/test_converters_real.py::TestANI2x::test_energy_negative PASSED [ 48%]
+dtmol/data/tests/test_converters_real.py::TestSPICE2::test_dataset_source PASSED [ 51%]
+dtmol/data/tests/test_converters_real.py::TestSPICE2::test_forces_present PASSED [ 54%]
+dtmol/data/tests/test_converters_real.py::TestSPICE2::test_energy_finite PASSED [ 57%]
+dtmol/data/tests/test_converters_real.py::TestSPICE2::test_partial_charges PASSED [ 60%]
+dtmol/data/tests/test_converters_real.py::TestIRC::test_dataset_source PASSED [ 62%]
+dtmol/data/tests/test_converters_real.py::TestIRC::test_relative_energy PASSED [ 65%]
+dtmol/data/tests/test_converters_real.py::TestIRC::test_timestep PASSED  [ 68%]
+dtmol/data/tests/test_converters_real.py::TestIRC::test_forces_present PASSED [ 71%]
+dtmol/data/tests/test_converters_real.py::TestPDBBind::test_dataset_source PASSED [ 74%]
+dtmol/data/tests/test_converters_real.py::TestPDBBind::test_component_mask_both PASSED [ 77%]
+dtmol/data/tests/test_converters_real.py::TestPDBBind::test_num_atoms PASSED [ 80%]
+dtmol/data/tests/test_converters_real.py::TestMISATO::test_dataset_source PASSED [ 82%]
+dtmol/data/tests/test_converters_real.py::TestMISATO::test_trajectory_id_4char PASSED [ 85%]
+dtmol/data/tests/test_converters_real.py::TestMISATO::test_component_mask_present PASSED [ 88%]
+dtmol/data/tests/test_converters_real.py::TestMISATO::test_num_atoms PASSED [ 91%]
+dtmol/data/tests/test_converters_real.py::TestPDBApo::test_dataset_source PASSED [ 94%]
+dtmol/data/tests/test_converters_real.py::TestPDBApo::test_component_mask_all_zero PASSED [ 97%]
+dtmol/data/tests/test_converters_real.py::TestPDBApo::test_num_atoms PASSED [100%]
+
+============================== 35 passed in 0.16s ==============================

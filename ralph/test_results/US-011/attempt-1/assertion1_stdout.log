@@ -1,0 +1,12 @@
+Number of datasets: 7
+Weights sum: 1.0
+--- Full content ---
+pdbbind: weight=0.25, path=/data/dtMol_Project/datasets/PDBBind/unified/train.lmdb
+misato: weight=0.2, path=/data/dtMol_Project/datasets/MISATO/unified/train.lmdb
+  frame_stride=10
+ani2x: weight=0.15, path=/data/dtMol_Project/datasets/ANI-2x/unified/train.lmdb
+spice2: weight=0.15, path=/data/dtMol_Project/datasets/SPICE2/unified/train.lmdb
+qm9: weight=0.1, path=/data/dtMol_Project/datasets/QM9/unified/train.lmdb
+irc: weight=0.1, path=/data/dtMol_Project/datasets/Transition1x/unified/train.lmdb
+pdb_apo: weight=0.05, path=/data/dtMol_Project/datasets/PDB_apo/unified/train.lmdb
+ASSERTION1 OK

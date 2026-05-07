@@ -1,0 +1,3 @@
+PASS: skip_if_no_lmdb skips on missing path: LMDB not found: /nonexistent/path
+PASS: skip_if_no_lmdb skips on dir without data.mdb: LMDB directory exists but has no data.mdb: /tmp/tmp229l85r0
+PASS: skip_if_no_lmdb does NOT skip when data.mdb exists

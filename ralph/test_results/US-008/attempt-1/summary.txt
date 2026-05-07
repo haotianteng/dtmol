@@ -1,0 +1,28 @@
+US-008 Test Results - Attempt 1
+================================
+
+AC1: Converter produces train/valid/test LMDBs
+  PASS - 19,413 records (15,530 train / 1,941 valid / 1,942 test)
+  Command: python -m dtmol.data.convert --source misato --input /data/dtMol_Project/datasets/MISATO/QM.hdf5 --output /data/dtMol_Project/datasets/MISATO/unified
+
+AC2: Spot-check fields
+  PARTIAL FAIL
+  - pes_tier='B': PASS
+  - trajectory_id 4-char PDB ID: PASS (e.g., '10GS', '11GS', '1A0Q')
+  - dataset_source='misato': PASS
+  - component_mask has 0 (protein) and 1 (ligand): FAIL — component_mask is ALL 1s (ligand only). No protein atoms present in any record.
+  - water stripped: N/A (no water in QM data)
+
+AC3: positions_prev and positions_next populated for non-boundary trajectory frames
+  FAIL — Both are None for ALL records. Data is single QM snapshots, not MD trajectories.
+
+AC4: Typecheck passes
+  PASS — mypy reports 'Success: no issues found in 1 source file'
+
+VERDICT: TEST_FAILED
+  The acceptance criteria explicitly require component_mask with both 0 (protein) and 1 (ligand),
+  and positions_prev/positions_next populated. The MISATO QM.hdf5 data is ligand-only single
+  snapshots, so the implementor correctly handles the data — but the AC as written is not met.
+  
+  Either the AC needs to be revised (if QM-only data is acceptable) or the converter needs to
+  incorporate protein atoms from the MD trajectory data or PDB structures.

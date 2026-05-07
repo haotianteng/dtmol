@@ -1,0 +1,6 @@
+total 20K
+drwxrwxr-x 5 haotiant haotiant 4K Apr 12 09:43 .
+drwxrwxr-x 4 haotiant haotiant 4K Apr 12 08:41 ..
+drwxrwxr-x 2 haotiant haotiant 4K Apr 12 09:43 test.lmdb
+drwxrwxr-x 2 haotiant haotiant 4K Apr 12 09:43 train.lmdb
+drwxrwxr-x 2 haotiant haotiant 4K Apr 12 09:43 valid.lmdb

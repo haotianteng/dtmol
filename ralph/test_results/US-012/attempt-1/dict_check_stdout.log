@@ -1,0 +1,4 @@
+Dict path resolves to: /home/haotiant/Projects/CMU/dtmol/dtmol/pretrain_models/unimol_molecule_dict.txt
+Exists: True
+Protein dict path: /home/haotiant/Projects/CMU/dtmol/dtmol/pretrain_models/unimol_protein_dict.txt
+Exists: True

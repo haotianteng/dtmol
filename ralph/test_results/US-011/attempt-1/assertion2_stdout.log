@@ -1,0 +1,11 @@
+Number of datasets: 7
+Weights sum: 1.0
+--- Full content ---
+pdbbind: weight=0.25, path=/data/dtMol_Project/datasets/PDBBind/unified/valid.lmdb
+misato: weight=0.2, path=/data/dtMol_Project/datasets/MISATO/unified/valid.lmdb
+ani2x: weight=0.15, path=/data/dtMol_Project/datasets/ANI-2x/unified/valid.lmdb
+spice2: weight=0.15, path=/data/dtMol_Project/datasets/SPICE2/unified/valid.lmdb
+qm9: weight=0.1, path=/data/dtMol_Project/datasets/QM9/unified/valid.lmdb
+irc: weight=0.1, path=/data/dtMol_Project/datasets/Transition1x/unified/valid.lmdb
+pdb_apo: weight=0.05, path=/data/dtMol_Project/datasets/PDB_apo/unified/valid.lmdb
+ASSERTION2 OK

@@ -1,0 +1,10 @@
+train: 105984 records
+valid: 13248 records
+test: 13248 records
+Total: 132480 records
+Record 0: energy=-11881.20 eV, homo=-6.4518229400000005, lumo=-0.8054574400000001, num_atoms=14, source=qm9, tier=C
+Record 1: energy=-11408.07 eV, homo=-4.7293413200000005, lumo=1.15104222, num_atoms=19, source=qm9, tier=C
+Record 2: energy=-10967.78 eV, homo=-5.8803835399999995, lumo=2.23949822, num_atoms=20, source=qm9, tier=C
+Record 3: energy=-12353.19 eV, homo=-5.477654820000001, lumo=0.9714469800000001, num_atoms=15, source=qm9, tier=C
+Record 4: energy=-12856.79 eV, homo=-6.19875692, lumo=0.76464034, num_atoms=18, source=qm9, tier=C
+All spot-checks passed

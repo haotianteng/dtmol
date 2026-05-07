@@ -1,0 +1,25 @@
+dtmol/dtmol_train_test.py:2: error: Library stubs not installed for "toml"  [import-untyped]
+dtmol/dtmol_train_test.py:2: note: Hint: "python3 -m pip install types-toml"
+dtmol/dtmol_train_test.py:2: note: (or run "mypy --install-types" to install all missing stub packages)
+dtmol/dtmol_train_test.py:2: note: See https://mypy.readthedocs.io/en/stable/running_mypy.html#missing-imports
+dtmol/dtmol_train_test.py:23: error: Incompatible default for argument "device" (default has type "None", argument has type "str")  [assignment]
+dtmol/dtmol_train_test.py:23: note: PEP 484 prohibits implicit Optional. Accordingly, mypy has changed its default to no_implicit_optional=True
+dtmol/dtmol_train_test.py:23: note: Use https://github.com/hauntsaninja/no_implicit_optional to automatically upgrade your codebase
+dtmol/dtmol_train_test.py:24: error: Incompatible default for argument "eval_dataloader" (default has type "None", argument has type "DataLoader[Any]")  [assignment]
+dtmol/dtmol_train_test.py:24: note: PEP 484 prohibits implicit Optional. Accordingly, mypy has changed its default to no_implicit_optional=True
+dtmol/dtmol_train_test.py:24: note: Use https://github.com/hauntsaninja/no_implicit_optional to automatically upgrade your codebase
+dtmol/dtmol_train_test.py:27: error: "Dict[Any, Any]" has no attribute "TRAIN"  [attr-defined]
+dtmol/dtmol_train_test.py:28: error: "Dict[Any, Any]" has no attribute "TRAIN"  [attr-defined]
+dtmol/dtmol_train_test.py:29: error: "Dict[Any, Any]" has no attribute "TRAIN"  [attr-defined]
+dtmol/dtmol_train_test.py:64: error: Incompatible default for argument "save_folder" (default has type "None", argument has type "str")  [assignment]
+dtmol/dtmol_train_test.py:64: note: PEP 484 prohibits implicit Optional. Accordingly, mypy has changed its default to no_implicit_optional=True
+dtmol/dtmol_train_test.py:64: note: Use https://github.com/hauntsaninja/no_implicit_optional to automatically upgrade your codebase
+dtmol/dtmol_train_test.py:80: error: Cannot determine type of "eval_ds"  [has-type]
+dtmol/dtmol_train_test.py:150: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]
+dtmol/dtmol_train_test.py:306: error: Too many arguments for "DummyModelConfig"  [call-arg]
+dtmol/dtmol_train_test.py:393: error: Argument "sampler" to "DiffusionTrainer" has incompatible type "Dict[str, Any]"; expected "Union[RotationSampler, GaussianSampler]"  [arg-type]
+dtmol/dtmol_train_test.py:394: error: Argument "config" to "DiffusionTrainer" has incompatible type "CONFIG"; expected "Dict[Any, Any]"  [arg-type]
+dtmol/dtmol_train_test.py:412: error: Argument "sampler" to "DiffusionTrainer" has incompatible type "Dict[str, Any]"; expected "Union[RotationSampler, GaussianSampler]"  [arg-type]
+dtmol/dtmol_train_test.py:414: error: Argument "config" to "DiffusionTrainer" has incompatible type "CONFIG"; expected "Dict[Any, Any]"  [arg-type]
+dtmol/dtmol_train_test.py:419: error: Value of type "Union[Dict[Any, Any], Module, ModuleDict]" is not indexable  [index]
+Found 14 errors in 1 file (checked 1 source file)

@@ -1,0 +1,38 @@
+fused_multi_tensor is not installed corrected
+fused_rounding is not installed corrected
+fused_layer_norm is not installed corrected
+fused_softmax is not installed corrected
+unicore_fused_layernorm is not installed corrected
+apex fused layer norm is not installed correctly, apex will be disabled.
+usage: dtmol_train_test.py [-h] [--dataset-mode {legacy,unified}]
+                           [--datamix DATAMIX] [--datamix-val DATAMIX_VAL]
+                           [--device DEVICE] [--batch-size BATCH_SIZE]
+                           [--epochs EPOCHS] [--lr LR]
+                           [--lambda-force LAMBDA_FORCE]
+                           [--lambda-fd-force LAMBDA_FD_FORCE]
+                           [--force-loss-fn {mse,smooth_l1}] [--use-wandb]
+
+dtmol training script
+
+optional arguments:
+  -h, --help            show this help message and exit
+  --dataset-mode {legacy,unified}
+                        Dataset mode: 'legacy' uses CrossDataset, 'unified'
+                        uses UnifiedDataset + DatasetMixer (default: legacy)
+  --datamix DATAMIX     Path to datamix.yaml for unified dataset mode
+  --datamix-val DATAMIX_VAL
+                        Path to validation datamix YAML for unified mode. If
+                        not provided, eval_loader = train_loader.
+  --device DEVICE       Device to train on (default: cpu)
+  --batch-size BATCH_SIZE
+                        Batch size (default: 5)
+  --epochs EPOCHS       Number of training epochs (default: 100)
+  --lr LR               Learning rate (default: 1e-5)
+  --lambda-force LAMBDA_FORCE
+                        Weight for Tier A force loss (default: 0.0)
+  --lambda-fd-force LAMBDA_FD_FORCE
+                        Weight for Tier B finite-difference force loss
+                        (default: 0.0)
+  --force-loss-fn {mse,smooth_l1}
+                        Force loss function (default: mse)
+  --use-wandb           Enable wandb logging

@@ -1,0 +1,20 @@
+=== train ===
+  rec 0: traj=C2H2N2O2/rxn3534, ts=0, energy=-249700.99 eV, rel_e=0.0000 eV, forces_shape=(8, 3), fmax=1.816 eV/A
+  rec 1: traj=C2H2N2O2/rxn3534, ts=1, energy=-249691.00 eV, rel_e=9.9927 eV, forces_shape=(8, 3), fmax=117.602 eV/A
+  rec 2: traj=C2H2N2O2/rxn3534, ts=10, energy=-249692.69 eV, rel_e=8.3045 eV, forces_shape=(8, 3), fmax=88.999 eV/A
+  rec 3: traj=C2H2N2O2/rxn3534, ts=100, energy=-249669.15 eV, rel_e=31.8386 eV, forces_shape=(8, 3), fmax=99.896 eV/A
+  rec 4: traj=C2H2N2O2/rxn3535, ts=710, energy=-249615.34 eV, rel_e=85.6557 eV, forces_shape=(8, 3), fmax=2.582 eV/A
+=== valid ===
+  rec 0: traj=C2H2N2O/rxn2091, ts=0, energy=-194019.95 eV, rel_e=0.0000 eV, forces_shape=(7, 3), fmax=2.136 eV/A
+  rec 1: traj=C2H2N2O/rxn2091, ts=1, energy=-194000.66 eV, rel_e=19.2906 eV, forces_shape=(7, 3), fmax=176.076 eV/A
+  rec 2: traj=C2H2N2O/rxn2091, ts=10, energy=-194001.89 eV, rel_e=18.0577 eV, forces_shape=(7, 3), fmax=162.668 eV/A
+  rec 3: traj=C2H2N2O/rxn2091, ts=100, energy=-193941.40 eV, rel_e=78.5536 eV, forces_shape=(7, 3), fmax=104.022 eV/A
+  rec 4: traj=C2H2N2O/rxn2092, ts=342, energy=-193872.41 eV, rel_e=147.5388 eV, forces_shape=(7, 3), fmax=14.186 eV/A
+=== test ===
+  rec 0: traj=C2H3N3O2/rxn10005, ts=0, energy=-290699.08 eV, rel_e=0.0000 eV, forces_shape=(10, 3), fmax=2.205 eV/A
+  rec 1: traj=C2H3N3O2/rxn10005, ts=1, energy=-290681.88 eV, rel_e=17.1932 eV, forces_shape=(10, 3), fmax=364.524 eV/A
+  rec 2: traj=C2H3N3O2/rxn10005, ts=10, energy=-290688.42 eV, rel_e=10.6582 eV, forces_shape=(10, 3), fmax=142.538 eV/A
+  rec 3: traj=C2H3N3O2/rxn10005, ts=100, energy=-290650.87 eV, rel_e=48.2071 eV, forces_shape=(10, 3), fmax=289.172 eV/A
+  rec 4: traj=C2H3N3O2/rxn10005, ts=1000, energy=-290622.53 eV, rel_e=76.5410 eV, forces_shape=(10, 3), fmax=2.028 eV/A
+
+All spot-checks PASSED
