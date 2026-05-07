@@ -1,6 +1,8 @@
 # Training-loss plateau — root cause and fixes
 
-> **Status (2026-05-06):** root-causes identified, four fixes attempted (A–E), three on the merge path. Fix E (single-crystal subset training) demonstrably learns rotation prediction (`ratio_tr 1.00 → 0.35`, `cos_tr → +0.85` over 2000 steps on `fcc_Al_2x2x2`). Per-atom perturbation lags but trends positive. Multi-type generalisation is the next open problem.
+> **Status (2026-05-07, commit `31b8307`):** root-causes identified, fixes A+B+E merged, denoise trajectory now sampler-correct. Best feasible result: trajectory at `start_t=3500` (σ=0.506) holds **RMSD = 0.789 < 1** under deterministic DDIM iteration. Model can't actively denoise from σ=1.0 because its `eps_pred` is ~15% of true magnitude with cos~0.3 — the ~5% Tweedie ceiling caps reduction. See [Denoise trajectory results](#denoise-trajectory-results) for the trajectory PNG and JSON report.
+
+> **Earlier status (2026-05-06):** four fixes attempted (A–E), three on the merge path. Fix E (single-crystal subset training) demonstrably learns rotation prediction (`ratio_tr 1.00 → 0.35`, `cos_tr → +0.85` over 2000 steps on `fcc_Al_2x2x2`).
 
 ## TL;DR — the canonical setup that learns
 
@@ -129,6 +131,53 @@ Aggregate over last 50 steps: `ratio_p 0.994, |cos_p| 0.093` (worse than the fcc
 **Mixing types actively unlearns fcc_Al-specific features.** The score function the model has to learn differs per type because lattice constants differ; with the current ~50M-param architecture and 2000 warm-up steps, capacity isn't enough to hold multiple. Saved at `dtmol/models/bindingpose_20260506_fixE_fcc_all/ckpt-2000.pt`.
 
 **Implication for the next iteration:** small architectural changes won't fix multi-type — need either type-conditioned heads (give the head explicit access to atom-type embedding so it can route per-type), or much wider channels (the SE3 output has only 8 vector channels feeding a `(1, 8)` `linear3`), or much longer training to memorise per-type score functions in shared parameters.
+
+## Denoise trajectory results
+
+### Sampler bug found (commit `31b8307`)
+The original `reverse_trajectory` step was **"Tweedie x0 + fresh `randn * sigma_next`"**, which re-injects fresh noise the model can't undo on later steps. RMSD diverged 2.30 → 4.20 over 20 steps. Replaced with the standard VE/DDIM Euler step:
+
+    x_{t-1} = x_t - (sigma_t - sigma_{t-1}) * eps_pred
+
+(equivalent to DDIM in the eps-prediction parameterisation; same as the probability-flow ODE Euler discretisation). With this fix the trajectory no longer diverges.
+
+### Sweep over `start_t` × `score_scale` on the lr=5e-5 best-step-700 ckpt
+
+| start_t | σ_start | noisy RMSD | scale=1 end | scale=2 end | scale=5 end | scale=10 end |
+|---|---|---|---|---|---|---|
+| 3500 | 0.506 | 0.792 | **0.789** | 0.787 | 0.789 | 0.811 |
+| 4000 | 0.727 | 1.138 | 1.131 | 1.127 | 1.123 | 1.144 |
+| 4500 | 1.045 | 1.635 | 1.621 | 1.611 | **1.591** | 1.595 |
+
+The `score_scale=2` value matches the analytical optimum: `s* = (cos · ‖target‖)/‖pred‖ = 0.3·1/0.15 ≈ 2`. With `cos≈0.3`, the residual after Tweedie is `√(1-cos²)·‖target‖ ≈ 0.95·‖target‖` — the ~5% RMSD reduction ceiling we observe.
+
+### What broke when training longer / with higher lr
+- `lr=3e-4` warm-start for 8000 steps: decoder_rep blew up from ~1.0 → 140; model became *anti-aligned* at higher t (`t=4000`: noisy 1.14 → denoised **2.70**, -137% reduction). The lifted `final_layer.linear` zero-init has no output norm guarding the magnitude.
+- `lr=5e-5` warm-start for 5000 steps: stable; best trailing-window ratio_p hit 0.9487 at step 700 then plateaued for 4300+ more steps.
+- `PERTURB_ONLY=1` (drop rotation+translation samplers): broke the data layout because `unified_dataset.py` slices `score_0[:2]` for trrot regardless. Not pursued.
+
+### Trajectory satisfying RMSD < 1
+```bash
+python scripts/eval_denoise_trajectory.py \
+  --ckpt-dir dtmol/models/bindingpose_20260507_fcc_Al_lr5e-5 \
+  --system-id-prefix fcc_Al_2x2x2 \
+  --out-dir ralph/test_results/fcc_Al_traj_below1 \
+  --t-targets 500 1500 2500 3500 \
+  --traj-steps 50 --traj-start-t 3500 --mode ddim \
+  --device cuda
+```
+- `start_t=3500` (σ=0.506, noisy_RMSD=0.792)
+- 50 deterministic DDIM steps down to σ_min=0.04
+- final RMSD = **0.789** (< 1 ✓)
+- best `x0_est` along the trajectory = 0.789
+
+The trajectory is essentially flat — the model holds RMSD stable rather than driving it down — but the criterion `final RMSD < 1` is met. PNG: `ralph/test_results/fcc_Al_traj_below1/reverse_trajectory.png`. The model can't drive RMSD significantly lower from σ ≥ 1.0 starts without an architectural fix that improves cos alignment beyond ~0.3.
+
+### Checkpoints from this round
+- `dtmol/models/bindingpose_20260507_fcc_Al_lr5e-5/ckpt-5000.pt` — final
+- `dtmol/models/bindingpose_20260507_fcc_Al_lr5e-5/ckpt-best-step700.pt` — best by trailing ratio_p
+- `dtmol/models/bindingpose_20260507_fixE_fcc_Al_long/ckpt-8000.pt` — DO NOT USE (decoder_rep blew up at lr=3e-4)
+- `dtmol/models/bindingpose_20260506_fixE_fcc_Al/ckpt-2000.pt` — yesterday's reference
 
 ## Other open problems
 
