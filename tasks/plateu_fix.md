@@ -5,13 +5,34 @@
 ## TL;DR — the canonical setup that learns
 
 ```bash
-# branch: debug/training-convergence (commit 4dafb9c at the time of writing)
+# branch: debug/training-convergence
+# state-of-this-doc commit: ab36b2c (saved checkpoint + eval scripts)
 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
 NO_DROPOUT=1 SYSTEM_ID_PREFIX=fcc_Al_2x2x2 \
   python scripts/debug_plateau.py \
     --max-batches 2000 --lr 1e-4 --device cuda \
     --save-folder dtmol/models/bindingpose_<DATE>_fixE_fcc_Al
 ```
+
+**Saved checkpoint from this run** (committed at `ab36b2c`):
+```
+dtmol/models/bindingpose_20260506_fixE_fcc_Al/ckpt-2000.pt   (716MB)
+dtmol/models/bindingpose_20260506_fixE_fcc_Al/checkpoint     (index)
+```
+
+**Visualise the trained denoise behaviour:**
+```bash
+python scripts/eval_denoise_trajectory.py \
+  --ckpt-dir dtmol/models/bindingpose_20260506_fixE_fcc_Al \
+  --system-id-prefix fcc_Al_2x2x2 \
+  --out-dir ralph/test_results/fixE_fcc_Al \
+  --t-targets 1000 2500 3500 4500 --traj-steps 20 --device cuda
+```
+Outputs `tweedie_panels.png`, `reverse_trajectory.png`, `report.json`.
+
+**Honest read of the eval (`ralph/test_results/fixE_fcc_Al/report.json`):**
+- Tweedie one-step RMSD reduction: 0.1% at t=1000 to 1.4% at t=4500. Direction is partially learned but magnitude is ~15% of target, so the Tweedie step `x0_est = x_t − sigma_t · eps_pred` only nudges back ~15% of the noise.
+- Reverse trajectory of 20 steps starts at RMSD=2.30 (pure noise → struct distance) and *diverges* to ~4.2. The model isn't yet a working denoiser — it has a useful but undersized score signal. **trrot rotation** is what learns first (cos_tr peaks ~+0.85 at step ~2000); per-atom **perturbation** lags (cos_p ~+0.3, ratio_p ~0.95).
 
 The branch carries:
 - **Fix A** — zero-init the geometric projection in both heads (`linear3.weight`/`out_proj2.weight`). Without it the random `y_branch` makes initial loss > baseline and Adam first kills `y_branch` toward 0 (regress-to-baseline) instead of rotating it toward target.
