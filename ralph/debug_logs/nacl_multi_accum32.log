@@ -1,0 +1,242 @@
+fused_multi_tensor is not installed corrected
+fused_rounding is not installed corrected
+fused_layer_norm is not installed corrected
+fused_softmax is not installed corrected
+unicore_fused_layernorm is not installed corrected
+apex fused layer norm is not installed correctly, apex will be disabled.
+[data] wrote 192 NaCl grid records to ralph/test_results/nacl_multi_accum32/train.lmdb
+/home/haotiant/conda/envs/dtmol/lib/python3.8/site-packages/torch/jit/_check.py:177: UserWarning: The TorchScript type system doesn't support instance-level annotations on empty non-base types in `__init__`. Instead, either 1) use a type annotation in the class body, or 2) wrap the type in `torch.jit.Attribute`.
+  warnings.warn(
+/home/haotiant/conda/envs/dtmol/lib/python3.8/site-packages/torch/jit/_check.py:177: UserWarning: The TorchScript type system doesn't support instance-level annotations on empty non-base types in `__init__`. Instead, either 1) use a type annotation in the class body, or 2) wrap the type in `torch.jit.Attribute`.
+  warnings.warn(
+/home/haotiant/conda/envs/dtmol/lib/python3.8/site-packages/torch/jit/_check.py:177: UserWarning: The TorchScript type system doesn't support instance-level annotations on empty non-base types in `__init__`. Instead, either 1) use a type annotation in the class body, or 2) wrap the type in `torch.jit.Attribute`.
+  warnings.warn(
+/home/haotiant/conda/envs/dtmol/lib/python3.8/site-packages/torch/jit/_check.py:177: UserWarning: The TorchScript type system doesn't support instance-level annotations on empty non-base types in `__init__`. Instead, either 1) use a type annotation in the class body, or 2) wrap the type in `torch.jit.Attribute`.
+  warnings.warn(
+/home/haotiant/conda/envs/dtmol/lib/python3.8/site-packages/torch/jit/_check.py:177: UserWarning: The TorchScript type system doesn't support instance-level annotations on empty non-base types in `__init__`. Instead, either 1) use a type annotation in the class body, or 2) wrap the type in `torch.jit.Attribute`.
+  warnings.warn(
+/home/haotiant/conda/envs/dtmol/lib/python3.8/site-packages/torch/jit/_check.py:177: UserWarning: The TorchScript type system doesn't support instance-level annotations on empty non-base types in `__init__`. Instead, either 1) use a type annotation in the class body, or 2) wrap the type in `torch.jit.Attribute`.
+  warnings.warn(
+/home/haotiant/conda/envs/dtmol/lib/python3.8/site-packages/torch/jit/_check.py:177: UserWarning: The TorchScript type system doesn't support instance-level annotations on empty non-base types in `__init__`. Instead, either 1) use a type annotation in the class body, or 2) wrap the type in `torch.jit.Attribute`.
+  warnings.warn(
+/home/haotiant/conda/envs/dtmol/lib/python3.8/site-packages/torch/jit/_check.py:177: UserWarning: The TorchScript type system doesn't support instance-level annotations on empty non-base types in `__init__`. Instead, either 1) use a type annotation in the class body, or 2) wrap the type in `torch.jit.Attribute`.
+  warnings.warn(
+/home/haotiant/conda/envs/dtmol/lib/python3.8/site-packages/torch/jit/_check.py:177: UserWarning: The TorchScript type system doesn't support instance-level annotations on empty non-base types in `__init__`. Instead, either 1) use a type annotation in the class body, or 2) wrap the type in `torch.jit.Attribute`.
+  warnings.warn(
+/home/haotiant/conda/envs/dtmol/lib/python3.8/site-packages/torch/jit/_check.py:177: UserWarning: The TorchScript type system doesn't support instance-level annotations on empty non-base types in `__init__`. Instead, either 1) use a type annotation in the class body, or 2) wrap the type in `torch.jit.Attribute`.
+  warnings.warn(
+/home/haotiant/conda/envs/dtmol/lib/python3.8/site-packages/torch/jit/_check.py:177: UserWarning: The TorchScript type system doesn't support instance-level annotations on empty non-base types in `__init__`. Instead, either 1) use a type annotation in the class body, or 2) wrap the type in `torch.jit.Attribute`.
+  warnings.warn(
+/home/haotiant/conda/envs/dtmol/lib/python3.8/site-packages/torch/jit/_check.py:177: UserWarning: The TorchScript type system doesn't support instance-level annotations on empty non-base types in `__init__`. Instead, either 1) use a type annotation in the class body, or 2) wrap the type in `torch.jit.Attribute`.
+  warnings.warn(
+/home/haotiant/conda/envs/dtmol/lib/python3.8/site-packages/torch/jit/_check.py:177: UserWarning: The TorchScript type system doesn't support instance-level annotations on empty non-base types in `__init__`. Instead, either 1) use a type annotation in the class body, or 2) wrap the type in `torch.jit.Attribute`.
+  warnings.warn(
+/home/haotiant/conda/envs/dtmol/lib/python3.8/site-packages/torch/jit/_check.py:177: UserWarning: The TorchScript type system doesn't support instance-level annotations on empty non-base types in `__init__`. Instead, either 1) use a type annotation in the class body, or 2) wrap the type in `torch.jit.Attribute`.
+  warnings.warn(
+/home/haotiant/conda/envs/dtmol/lib/python3.8/site-packages/torch/jit/_check.py:177: UserWarning: The TorchScript type system doesn't support instance-level annotations on empty non-base types in `__init__`. Instead, either 1) use a type annotation in the class body, or 2) wrap the type in `torch.jit.Attribute`.
+  warnings.warn(
+/home/haotiant/conda/envs/dtmol/lib/python3.8/site-packages/torch/jit/_check.py:177: UserWarning: The TorchScript type system doesn't support instance-level annotations on empty non-base types in `__init__`. Instead, either 1) use a type annotation in the class body, or 2) wrap the type in `torch.jit.Attribute`.
+  warnings.warn(
+/home/haotiant/conda/envs/dtmol/lib/python3.8/site-packages/torch/jit/_check.py:177: UserWarning: The TorchScript type system doesn't support instance-level annotations on empty non-base types in `__init__`. Instead, either 1) use a type annotation in the class body, or 2) wrap the type in `torch.jit.Attribute`.
+  warnings.warn(
+/home/haotiant/conda/envs/dtmol/lib/python3.8/site-packages/torch/jit/_check.py:177: UserWarning: The TorchScript type system doesn't support instance-level annotations on empty non-base types in `__init__`. Instead, either 1) use a type annotation in the class body, or 2) wrap the type in `torch.jit.Attribute`.
+  warnings.warn(
+/home/haotiant/conda/envs/dtmol/lib/python3.8/site-packages/torch/jit/_check.py:177: UserWarning: The TorchScript type system doesn't support instance-level annotations on empty non-base types in `__init__`. Instead, either 1) use a type annotation in the class body, or 2) wrap the type in `torch.jit.Attribute`.
+  warnings.warn(
+/home/haotiant/conda/envs/dtmol/lib/python3.8/site-packages/torch/jit/_check.py:177: UserWarning: The TorchScript type system doesn't support instance-level annotations on empty non-base types in `__init__`. Instead, either 1) use a type annotation in the class body, or 2) wrap the type in `torch.jit.Attribute`.
+  warnings.warn(
+/home/haotiant/conda/envs/dtmol/lib/python3.8/site-packages/torch/jit/_check.py:177: UserWarning: The TorchScript type system doesn't support instance-level annotations on empty non-base types in `__init__`. Instead, either 1) use a type annotation in the class body, or 2) wrap the type in `torch.jit.Attribute`.
+  warnings.warn(
+/home/haotiant/conda/envs/dtmol/lib/python3.8/site-packages/torch/jit/_check.py:177: UserWarning: The TorchScript type system doesn't support instance-level annotations on empty non-base types in `__init__`. Instead, either 1) use a type annotation in the class body, or 2) wrap the type in `torch.jit.Attribute`.
+  warnings.warn(
+/home/haotiant/conda/envs/dtmol/lib/python3.8/site-packages/torch/jit/_check.py:177: UserWarning: The TorchScript type system doesn't support instance-level annotations on empty non-base types in `__init__`. Instead, either 1) use a type annotation in the class body, or 2) wrap the type in `torch.jit.Attribute`.
+  warnings.warn(
+/home/haotiant/conda/envs/dtmol/lib/python3.8/site-packages/torch/jit/_check.py:177: UserWarning: The TorchScript type system doesn't support instance-level annotations on empty non-base types in `__init__`. Instead, either 1) use a type annotation in the class body, or 2) wrap the type in `torch.jit.Attribute`.
+  warnings.warn(
+/home/haotiant/conda/envs/dtmol/lib/python3.8/site-packages/torch/jit/_check.py:177: UserWarning: The TorchScript type system doesn't support instance-level annotations on empty non-base types in `__init__`. Instead, either 1) use a type annotation in the class body, or 2) wrap the type in `torch.jit.Attribute`.
+  warnings.warn(
+/home/haotiant/conda/envs/dtmol/lib/python3.8/site-packages/torch/jit/_check.py:177: UserWarning: The TorchScript type system doesn't support instance-level annotations on empty non-base types in `__init__`. Instead, either 1) use a type annotation in the class body, or 2) wrap the type in `torch.jit.Attribute`.
+  warnings.warn(
+/home/haotiant/conda/envs/dtmol/lib/python3.8/site-packages/torch/jit/_check.py:177: UserWarning: The TorchScript type system doesn't support instance-level annotations on empty non-base types in `__init__`. Instead, either 1) use a type annotation in the class body, or 2) wrap the type in `torch.jit.Attribute`.
+  warnings.warn(
+/home/haotiant/conda/envs/dtmol/lib/python3.8/site-packages/torch/jit/_check.py:177: UserWarning: The TorchScript type system doesn't support instance-level annotations on empty non-base types in `__init__`. Instead, either 1) use a type annotation in the class body, or 2) wrap the type in `torch.jit.Attribute`.
+  warnings.warn(
+/home/haotiant/conda/envs/dtmol/lib/python3.8/site-packages/torch/jit/_check.py:177: UserWarning: The TorchScript type system doesn't support instance-level annotations on empty non-base types in `__init__`. Instead, either 1) use a type annotation in the class body, or 2) wrap the type in `torch.jit.Attribute`.
+  warnings.warn(
+/home/haotiant/conda/envs/dtmol/lib/python3.8/site-packages/torch/jit/_check.py:177: UserWarning: The TorchScript type system doesn't support instance-level annotations on empty non-base types in `__init__`. Instead, either 1) use a type annotation in the class body, or 2) wrap the type in `torch.jit.Attribute`.
+  warnings.warn(
+/home/haotiant/conda/envs/dtmol/lib/python3.8/site-packages/torch/jit/_check.py:177: UserWarning: The TorchScript type system doesn't support instance-level annotations on empty non-base types in `__init__`. Instead, either 1) use a type annotation in the class body, or 2) wrap the type in `torch.jit.Attribute`.
+  warnings.warn(
+/home/haotiant/conda/envs/dtmol/lib/python3.8/site-packages/torch/jit/_check.py:177: UserWarning: The TorchScript type system doesn't support instance-level annotations on empty non-base types in `__init__`. Instead, either 1) use a type annotation in the class body, or 2) wrap the type in `torch.jit.Attribute`.
+  warnings.warn(
+/home/haotiant/conda/envs/dtmol/lib/python3.8/site-packages/torch/jit/_check.py:177: UserWarning: The TorchScript type system doesn't support instance-level annotations on empty non-base types in `__init__`. Instead, either 1) use a type annotation in the class body, or 2) wrap the type in `torch.jit.Attribute`.
+  warnings.warn(
+/home/haotiant/conda/envs/dtmol/lib/python3.8/site-packages/torch/jit/_check.py:177: UserWarning: The TorchScript type system doesn't support instance-level annotations on empty non-base types in `__init__`. Instead, either 1) use a type annotation in the class body, or 2) wrap the type in `torch.jit.Attribute`.
+  warnings.warn(
+/home/haotiant/conda/envs/dtmol/lib/python3.8/site-packages/torch/jit/_check.py:177: UserWarning: The TorchScript type system doesn't support instance-level annotations on empty non-base types in `__init__`. Instead, either 1) use a type annotation in the class body, or 2) wrap the type in `torch.jit.Attribute`.
+  warnings.warn(
+/home/haotiant/conda/envs/dtmol/lib/python3.8/site-packages/torch/jit/_check.py:177: UserWarning: The TorchScript type system doesn't support instance-level annotations on empty non-base types in `__init__`. Instead, either 1) use a type annotation in the class body, or 2) wrap the type in `torch.jit.Attribute`.
+  warnings.warn(
+/home/haotiant/conda/envs/dtmol/lib/python3.8/site-packages/torch/jit/_check.py:177: UserWarning: The TorchScript type system doesn't support instance-level annotations on empty non-base types in `__init__`. Instead, either 1) use a type annotation in the class body, or 2) wrap the type in `torch.jit.Attribute`.
+  warnings.warn(
+/home/haotiant/conda/envs/dtmol/lib/python3.8/site-packages/torch/jit/_check.py:177: UserWarning: The TorchScript type system doesn't support instance-level annotations on empty non-base types in `__init__`. Instead, either 1) use a type annotation in the class body, or 2) wrap the type in `torch.jit.Attribute`.
+  warnings.warn(
+/home/haotiant/conda/envs/dtmol/lib/python3.8/site-packages/torch/jit/_check.py:177: UserWarning: The TorchScript type system doesn't support instance-level annotations on empty non-base types in `__init__`. Instead, either 1) use a type annotation in the class body, or 2) wrap the type in `torch.jit.Attribute`.
+  warnings.warn(
+/home/haotiant/conda/envs/dtmol/lib/python3.8/site-packages/torch/jit/_check.py:177: UserWarning: The TorchScript type system doesn't support instance-level annotations on empty non-base types in `__init__`. Instead, either 1) use a type annotation in the class body, or 2) wrap the type in `torch.jit.Attribute`.
+  warnings.warn(
+/home/haotiant/conda/envs/dtmol/lib/python3.8/site-packages/torch/jit/_check.py:177: UserWarning: The TorchScript type system doesn't support instance-level annotations on empty non-base types in `__init__`. Instead, either 1) use a type annotation in the class body, or 2) wrap the type in `torch.jit.Attribute`.
+  warnings.warn(
+/home/haotiant/conda/envs/dtmol/lib/python3.8/site-packages/torch/jit/_check.py:177: UserWarning: The TorchScript type system doesn't support instance-level annotations on empty non-base types in `__init__`. Instead, either 1) use a type annotation in the class body, or 2) wrap the type in `torch.jit.Attribute`.
+  warnings.warn(
+/home/haotiant/conda/envs/dtmol/lib/python3.8/site-packages/torch/jit/_check.py:177: UserWarning: The TorchScript type system doesn't support instance-level annotations on empty non-base types in `__init__`. Instead, either 1) use a type annotation in the class body, or 2) wrap the type in `torch.jit.Attribute`.
+  warnings.warn(
+/home/haotiant/conda/envs/dtmol/lib/python3.8/site-packages/torch/jit/_check.py:177: UserWarning: The TorchScript type system doesn't support instance-level annotations on empty non-base types in `__init__`. Instead, either 1) use a type annotation in the class body, or 2) wrap the type in `torch.jit.Attribute`.
+  warnings.warn(
+/home/haotiant/conda/envs/dtmol/lib/python3.8/site-packages/torch/jit/_check.py:177: UserWarning: The TorchScript type system doesn't support instance-level annotations on empty non-base types in `__init__`. Instead, either 1) use a type annotation in the class body, or 2) wrap the type in `torch.jit.Attribute`.
+  warnings.warn(
+/home/haotiant/conda/envs/dtmol/lib/python3.8/site-packages/torch/jit/_check.py:177: UserWarning: The TorchScript type system doesn't support instance-level annotations on empty non-base types in `__init__`. Instead, either 1) use a type annotation in the class body, or 2) wrap the type in `torch.jit.Attribute`.
+  warnings.warn(
+/home/haotiant/conda/envs/dtmol/lib/python3.8/site-packages/torch/jit/_check.py:177: UserWarning: The TorchScript type system doesn't support instance-level annotations on empty non-base types in `__init__`. Instead, either 1) use a type annotation in the class body, or 2) wrap the type in `torch.jit.Attribute`.
+  warnings.warn(
+/home/haotiant/conda/envs/dtmol/lib/python3.8/site-packages/torch/jit/_check.py:177: UserWarning: The TorchScript type system doesn't support instance-level annotations on empty non-base types in `__init__`. Instead, either 1) use a type annotation in the class body, or 2) wrap the type in `torch.jit.Attribute`.
+  warnings.warn(
+[samplers] sigma_max: rot=0.11 tr=0.11 pert=0.3
+[data] dataset length = 192
+[train] 10000 steps, lr=0.0005, grad_accum=32 (effective_bsz=32)
+step     0  loss=1.4470
+step   100  loss=2.2657
+step   200  loss=2.2116
+step   300  loss=1.6317
+step   400  loss=1.5505
+step   500  loss=1.9426
+step   600  loss=3.0098
+step   700  loss=2.2527
+step   800  loss=1.9850
+step   900  loss=1.8454
+step  1000  loss=2.3277
+step  1100  loss=1.3231
+step  1200  loss=1.1371
+step  1300  loss=2.1794
+step  1400  loss=1.0996
+step  1500  loss=2.1959
+step  1600  loss=1.4158
+step  1700  loss=1.2862
+step  1800  loss=1.5208
+step  1900  loss=1.9232
+step  2000  loss=1.6549
+step  2100  loss=2.2406
+step  2200  loss=1.3650
+step  2300  loss=1.9909
+step  2400  loss=1.3400
+step  2500  loss=2.2890
+step  2600  loss=1.7226
+step  2700  loss=2.2447
+step  2800  loss=2.2344
+step  2900  loss=1.7448
+step  3000  loss=1.1833
+step  3100  loss=1.4980
+step  3200  loss=1.5587
+step  3300  loss=1.1836
+step  3400  loss=3.4467
+step  3500  loss=2.2490
+step  3600  loss=1.7604
+step  3700  loss=1.7785
+step  3800  loss=1.4079
+step  3900  loss=1.2350
+step  4000  loss=2.3808
+step  4100  loss=1.9662
+step  4200  loss=1.6124
+step  4300  loss=1.7943
+step  4400  loss=1.1893
+step  4500  loss=1.1436
+step  4600  loss=1.0090
+step  4700  loss=1.3497
+step  4800  loss=2.1402
+step  4900  loss=3.3862
+step  5000  loss=2.0807
+step  5100  loss=2.5509
+step  5200  loss=1.1528
+step  5300  loss=1.2287
+step  5400  loss=1.6957
+step  5500  loss=1.6391
+step  5600  loss=1.1042
+step  5700  loss=3.0879
+step  5800  loss=1.9640
+step  5900  loss=1.9201
+step  6000  loss=2.0482
+step  6100  loss=1.7136
+step  6200  loss=1.6145
+step  6300  loss=1.6774
+step  6400  loss=2.9252
+step  6500  loss=3.2407
+step  6600  loss=2.0263
+step  6700  loss=1.7108
+step  6800  loss=2.4721
+step  6900  loss=2.0096
+step  7000  loss=2.7847
+step  7100  loss=1.5973
+step  7200  loss=2.2762
+step  7300  loss=1.7560
+step  7400  loss=2.4611
+step  7500  loss=2.0153
+step  7600  loss=2.4825
+step  7700  loss=2.8355
+step  7800  loss=1.0938
+step  7900  loss=3.2280
+step  8000  loss=1.7177
+step  8100  loss=1.5284
+step  8200  loss=2.1271
+step  8300  loss=3.1800
+step  8400  loss=2.4353
+step  8500  loss=2.9657
+step  8600  loss=2.3200
+step  8700  loss=2.4729
+step  8800  loss=1.9179
+step  8900  loss=2.3176
+step  9000  loss=2.5119
+step  9100  loss=1.8275
+step  9200  loss=1.8611
+step  9300  loss=1.4066
+step  9400  loss=2.6143
+step  9500  loss=2.2317
+step  9600  loss=2.2680
+step  9700  loss=1.4979
+step  9800  loss=2.6824
+step  9900  loss=1.6639
+step  9999  loss=2.6307
+[train] done in 2846.3s (0.28s/step)
+[ckpt] ralph/test_results/nacl_multi_accum32/ckpt-final.pt
+[eval] held-out 11×11 grid (121 atoms)
+[eval] chain T=5000, start_t=4999, sigma_start=0.300
+  step   0  t= 4999  sigma=0.300  RMSD x_t=0.514  x0_est=0.513  (Kabsch: 0.513 / 0.512)
+  step  10  t= 3978  sigma=0.199  RMSD x_t=0.514  x0_est=0.514  (Kabsch: 0.513 / 0.513)
+  step  20  t= 2958  sigma=0.132  RMSD x_t=0.514  x0_est=0.513  (Kabsch: 0.513 / 0.512)
+  step  30  t= 1938  sigma=0.087  RMSD x_t=0.513  x0_est=0.513  (Kabsch: 0.513 / 0.512)
+  step  40  t=  918  sigma=0.058  RMSD x_t=0.513  x0_est=0.513  (Kabsch: 0.513 / 0.513)
+  step  49  t=    0  sigma=0.040  RMSD x_t=0.513  x0_est=0.513  (Kabsch: 0.513 / 0.513)
+[traj] RMSD x_t  : start=0.514 -> end=0.513
+[traj] RMSD Kabsch: start=0.513 -> end=0.513
+[traj] best x0 RMSD:       0.512
+[traj] best x0 RMSD Kabsch: 0.511
+[tweedie] cos=-0.029  noisy=0.389A  denoised=0.389A  (Kabsch=0.068A)
+[done] artefacts in ralph/test_results/nacl_multi_accum32
+  ralph/test_results/nacl_multi_accum32/triptych.png
+  ralph/test_results/nacl_multi_accum32/trajectory.png
+  ralph/test_results/nacl_multi_accum32/rmsd_curve.png
+/home/haotiant/conda/envs/dtmol/lib/python3.8/site-packages/torch/jit/_check.py:177: UserWarning: The TorchScript type system doesn't support instance-level annotations on empty non-base types in `__init__`. Instead, either 1) use a type annotation in the class body, or 2) wrap the type in `torch.jit.Attribute`.
+  warnings.warn(
+/home/haotiant/conda/envs/dtmol/lib/python3.8/site-packages/torch/jit/_check.py:177: UserWarning: The TorchScript type system doesn't support instance-level annotations on empty non-base types in `__init__`. Instead, either 1) use a type annotation in the class body, or 2) wrap the type in `torch.jit.Attribute`.
+  warnings.warn(
+/home/haotiant/conda/envs/dtmol/lib/python3.8/site-packages/torch/jit/_check.py:177: UserWarning: The TorchScript type system doesn't support instance-level annotations on empty non-base types in `__init__`. Instead, either 1) use a type annotation in the class body, or 2) wrap the type in `torch.jit.Attribute`.
+  warnings.warn(
+/home/haotiant/conda/envs/dtmol/lib/python3.8/site-packages/torch/jit/_check.py:177: UserWarning: The TorchScript type system doesn't support instance-level annotations on empty non-base types in `__init__`. Instead, either 1) use a type annotation in the class body, or 2) wrap the type in `torch.jit.Attribute`.
+  warnings.warn(
+/home/haotiant/conda/envs/dtmol/lib/python3.8/site-packages/torch/jit/_check.py:177: UserWarning: The TorchScript type system doesn't support instance-level annotations on empty non-base types in `__init__`. Instead, either 1) use a type annotation in the class body, or 2) wrap the type in `torch.jit.Attribute`.
+  warnings.warn(
+/home/haotiant/conda/envs/dtmol/lib/python3.8/site-packages/torch/jit/_check.py:177: UserWarning: The TorchScript type system doesn't support instance-level annotations on empty non-base types in `__init__`. Instead, either 1) use a type annotation in the class body, or 2) wrap the type in `torch.jit.Attribute`.
+  warnings.warn(
+/home/haotiant/conda/envs/dtmol/lib/python3.8/site-packages/torch/jit/_check.py:177: UserWarning: The TorchScript type system doesn't support instance-level annotations on empty non-base types in `__init__`. Instead, either 1) use a type annotation in the class body, or 2) wrap the type in `torch.jit.Attribute`.
+  warnings.warn(
+/home/haotiant/conda/envs/dtmol/lib/python3.8/site-packages/torch/jit/_check.py:177: UserWarning: The TorchScript type system doesn't support instance-level annotations on empty non-base types in `__init__`. Instead, either 1) use a type annotation in the class body, or 2) wrap the type in `torch.jit.Attribute`.
+  warnings.warn(
