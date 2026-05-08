@@ -1,0 +1,11 @@
+{
+  "structure": "cross_NaCl_2d (5 Na vertical + 4 Cl horizontal at z=0)",
+  "ckpt": "ralph/test_results/eyeball_cross/ckpt-final.pt",
+  "sigma_t": 0.13146281242370605,
+  "fixed_t": 4500,
+  "sigma_pert_max": 0.15,
+  "rmsd_noisy": 0.34597647190093994,
+  "rmsd_denoised": 0.20510002970695496,
+  "rmsd_reduction": 0.4071850360804904,
+  "cos": 0.9999999377220986
+}
