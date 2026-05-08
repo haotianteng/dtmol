@@ -1,0 +1,15 @@
+{
+  "structure": "nacl_grid_9x9 (Z=11/Z=17 checkerboard)",
+  "n_atoms": 81,
+  "ckpt": "ralph/test_results/eyeball_nacl_9x9_s03/ckpt-final.pt",
+  "sigma_t": 0.24535229802131653,
+  "fixed_t": 4500,
+  "sigma_pert_max": 0.3,
+  "rmsd_noisy": 0.5724701285362244,
+  "rmsd_denoised": 0.5723309516906738,
+  "rmsd_reduction": 0.00024311634548757066,
+  "rmsd_noisy_kabsch": 0.3955078994070051,
+  "rmsd_denoised_kabsch": 0.3952634972048006,
+  "rmsd_reduction_kabsch": 0.0006179451853450812,
+  "cos": 0.14807981344017584
+}

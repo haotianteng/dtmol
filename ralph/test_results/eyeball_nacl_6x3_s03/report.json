@@ -1,0 +1,12 @@
+{
+  "structure": "nacl_grid_6x3 (Z=11/Z=17 checkerboard)",
+  "n_atoms": 18,
+  "ckpt": "ralph/test_results/eyeball_nacl_6x3_s03/ckpt-final.pt",
+  "sigma_t": 0.24535229802131653,
+  "fixed_t": 4500,
+  "sigma_pert_max": 0.3,
+  "rmsd_noisy": 0.4895850419998169,
+  "rmsd_denoised": 0.3168178200721741,
+  "rmsd_reduction": 0.35288500894949204,
+  "cos": 0.8145139103574247
+}

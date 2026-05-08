@@ -1,0 +1,16 @@
+step     0  loss=2.2181
+step   100  loss=1.1361
+step   200  loss=1.2548
+step   300  loss=1.0492
+step   400  loss=0.9702
+step   500  loss=0.9350
+step   600  loss=0.8965
+step   700  loss=0.8725
+step   800  loss=0.8512
+step   900  loss=0.8355
+step  1000  loss=0.8203
+step  1100  loss=0.8016
+step  1200  loss=0.8774
+step  1300  loss=0.8115
+step  1400  loss=0.7972
+step  1499  loss=0.7342
