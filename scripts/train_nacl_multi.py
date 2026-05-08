@@ -149,6 +149,9 @@ def main():
     ap.add_argument("--eval-height", type=int, default=11)
     ap.add_argument("--traj-steps", type=int, default=50)
     ap.add_argument("--sigma-pert-max", type=float, default=0.3)
+    ap.add_argument("--gradient-accumulation-steps", type=int, default=1,
+                    help="Accumulate gradients over N forward passes before "
+                         "optimizer.step(). Effective batch = 1 × N.")
     args = ap.parse_args()
 
     os.makedirs(args.out_dir, exist_ok=True)
@@ -244,21 +247,33 @@ def main():
                 m.p = 0.0
 
     optimizer = torch.optim.Adam(trainer.nets["decoder"].parameters(), lr=args.lr)
+    accum_steps = args.gradient_accumulation_steps
 
     # ---- 2. train ----
     log_path = os.path.join(args.out_dir, "train.log")
     log_f = open(log_path, "w")
-    print(f"[train] {args.steps} steps, lr={args.lr}", flush=True)
+    print(f"[train] {args.steps} steps, lr={args.lr}, "
+          f"grad_accum={accum_steps} (effective_bsz={accum_steps})",
+          flush=True)
     t0 = time.time()
+    optimizer.zero_grad()
     for i in range(args.steps):
         batch = to_device(next(train_gen), args.device)
         loss, _ = trainer.train_step(batch)
         if torch.isnan(loss):
             continue
-        optimizer.zero_grad(); loss.backward(); optimizer.step()
+        scaled_loss = loss / accum_steps
+        scaled_loss.backward()
+        if (i + 1) % accum_steps == 0:
+            optimizer.step()
+            optimizer.zero_grad()
         if i % 100 == 0 or i == args.steps - 1:
             line = f"step {i:5d}  loss={loss.item():.4f}"
             print(line, flush=True); log_f.write(line + "\n"); log_f.flush()
+    # Flush any remaining accumulated gradients
+    if args.steps % accum_steps != 0:
+        optimizer.step()
+        optimizer.zero_grad()
     log_f.close()
     elapsed = time.time() - t0
     print(f"[train] done in {elapsed:.1f}s ({elapsed/args.steps:.2f}s/step)", flush=True)

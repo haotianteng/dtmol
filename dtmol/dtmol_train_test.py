@@ -65,49 +65,58 @@ class DiffusionTrainer(Trainer):
               param_norm_every_n_steps: int = 100):
         self.save_folder = save_folder
         self._save_config()
+        accum_steps = self.config.TRAIN.get('gradient_accumulation_steps', 1)
+        if accum_steps > 1:
+            self.logger.info(f"Gradient accumulation enabled: {accum_steps} steps "
+                             f"(effective batch size = physical_batch × {accum_steps})")
+        optimizer.zero_grad()
         for epoch_i in range(epoches):
             for i_step, batch in enumerate(self.train_ds):
                 loss, loss_dict = self.train_step(batch)
                 if torch.isnan(loss):
                     self._alert("NaN loss detected, skip this training step.",level = "warning")
                     continue
-                optimizer.zero_grad()
-                loss.backward()
-                # Snapshot parameter and gradient norms BEFORE optimizer.step
-                # so the wandb panel reflects the state that produced the
-                # current gradients (early warning for weight blow-up).
-                pn_metrics = None
-                if (self.use_wandb and i_step % param_norm_every_n_steps == 0):
-                    pn_metrics = self._param_norm_metrics(include_grads=True)
-                optimizer.step()
-                if i_step % save_every_n_steps == 0:
-                    self.save()
-                if i_step % valid_every_n_steps == 0:
-                    with torch.no_grad():
-                        valid_batch = next(iter(self.eval_ds))
-                        valid_loss, valid_loss_dict = self.valid_step(valid_batch)
-                        msg = f"Epoch {epoch_i}: Step {i_step}, train loss {loss:.4f}, valid loss {valid_loss:.4f}"
-                        self.logger.info(msg)
-                        if self.use_wandb:
-                            log_dict: Dict[str, object] = {
-                                "epoch": epoch_i,
-                                "global_step": self.global_step,
-                                "train_loss": loss,
-                                "train_diffusion_loss": loss_dict['diffusion_loss'],
-                                "train_force_loss": loss_dict['force_loss'],
-                                "valid_loss": valid_loss,
-                                "valid_diffusion_loss": valid_loss_dict['diffusion_loss'],
-                                "valid_force_loss": valid_loss_dict['force_loss'],
-                            }
-                            if pn_metrics is not None:
-                                log_dict.update(pn_metrics)
-                            wandb.log(log_dict)
-                elif pn_metrics is not None:
-                    # Param-norm cadence may be tighter than valid cadence;
-                    # log on its own when there's no valid step this iter.
-                    pn_metrics["epoch"] = epoch_i
-                    pn_metrics["global_step"] = self.global_step
-                    wandb.log(pn_metrics)
+                # Scale loss for gradient accumulation so the averaged gradient
+                # matches what a single large batch would produce.
+                scaled_loss = loss / accum_steps
+                scaled_loss.backward()
+
+                if (i_step + 1) % accum_steps == 0:
+                    # Snapshot parameter and gradient norms BEFORE optimizer.step
+                    # so the wandb panel reflects the state that produced the
+                    # current gradients (early warning for weight blow-up).
+                    pn_metrics = None
+                    if (self.use_wandb and i_step % param_norm_every_n_steps == 0):
+                        pn_metrics = self._param_norm_metrics(include_grads=True)
+                    optimizer.step()
+                    optimizer.zero_grad()
+                    if i_step % save_every_n_steps == 0:
+                        self.save()
+                    # Log the UNSCALED loss for display clarity.
+                    if i_step % valid_every_n_steps == 0:
+                        with torch.no_grad():
+                            valid_batch = next(iter(self.eval_ds))
+                            valid_loss, valid_loss_dict = self.valid_step(valid_batch)
+                            msg = f"Epoch {epoch_i}: Step {i_step}, train loss {loss:.4f}, valid loss {valid_loss:.4f}"
+                            self.logger.info(msg)
+                            if self.use_wandb:
+                                log_dict: Dict[str, object] = {
+                                    "epoch": epoch_i,
+                                    "global_step": self.global_step,
+                                    "train_loss": loss,
+                                    "train_diffusion_loss": loss_dict['diffusion_loss'],
+                                    "train_force_loss": loss_dict['force_loss'],
+                                    "valid_loss": valid_loss,
+                                    "valid_diffusion_loss": valid_loss_dict['diffusion_loss'],
+                                    "valid_force_loss": valid_loss_dict['force_loss'],
+                                }
+                                if pn_metrics is not None:
+                                    log_dict.update(pn_metrics)
+                                wandb.log(log_dict)
+                    elif pn_metrics is not None:
+                        pn_metrics["epoch"] = epoch_i
+                        pn_metrics["global_step"] = self.global_step
+                        wandb.log(pn_metrics)
 
     def _call_decoder(self, batch, mole_input, pocket_input, mole_embd, pocket_embd,
                       mole_padding, pocket_padding, mole_attn, pocket_attn):
@@ -343,6 +352,10 @@ if __name__ == "__main__":
                              "the architecture trains stably — dropout in "
                              "train mode introduces gradient noise that can "
                              "kill score-matching learning signal.")
+    parser.add_argument("--gradient-accumulation-steps", type=int, default=1,
+                        help="Accumulate gradients over this many forward passes "
+                             "before calling optimizer.step(). Effective batch "
+                             "size = --batch-size × this value. (default: 1)")
     args = parser.parse_args()
 
     package_path = "/home/haotiant/Projects/CMU/dtmol/"
@@ -377,6 +390,7 @@ if __name__ == "__main__":
         force_loss_fn=args.force_loss_fn,
         dataset_mode=args.dataset_mode,
         use_wandb=args.use_wandb,
+        gradient_accumulation_steps=args.gradient_accumulation_steps,
     )
 
     if args.dataset_mode == "unified":
