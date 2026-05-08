@@ -26,7 +26,7 @@ def base_architecture(args):
     args.g_loss = getattr(args, "g_noise_loss", -1.0)
     args.max_diffusion_time = getattr(args, "max_diffusion_time", 5000)
     args.independent_se3_attention = getattr(args, "independent_se3_attention", True)
-    args.update_distance_matrix = getattr(args, "update_distance_matrix", False)
+    args.update_distance_matrix = getattr(args, "update_distance_matrix", True)
     args.use_cross_product_update = getattr(args, "use_cross_product_update", False)
 
 class Decoder(nn.Module):

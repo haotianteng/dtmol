@@ -436,6 +436,10 @@ class SE3ELayer(nn.Module):
 
         if update_distance_matrix:
             self.dist_update_proj = nn.Linear(heads, heads, bias=False)
+            # Small initial scale for coordinate updates — prevents the SE3→coord
+            # feedback from destabilising early training while the SE3 stack is
+            # still random. Grows via gradient as needed.
+            self.dist_update_scale = nn.Parameter(torch.tensor(0.01))
 
     def forward(self, attn_disp, attn_mask, coordinates, node_features = None, edge_features = None):
         """
@@ -449,7 +453,7 @@ class SE3ELayer(nn.Module):
         """
         bsz,seq_len,d = coordinates.size()
         if self.update_distance_matrix:
-            old_distance_matrix = get_distance_matrix(coordinates.view(bsz*self.attention_heads, seq_len, d))
+            old_distance_matrix = get_distance_matrix(coordinates)  # [B, N, N]
         normalizer = torch.sqrt(torch.sum(~torch.isinf(attn_disp[:,0,:,:]),axis = -1)) # number of non-inf values in each row [B, N]
         normalizer = normalizer.unsqueeze(-1) # [B, 1, N]
         # fill -inf with 0
@@ -479,19 +483,31 @@ class SE3ELayer(nn.Module):
         if residual is not None:
             node_features = node_features + residual
         if self.update_distance_matrix:
-            #TODO update coordinates according to node features
-            raise NotImplementedError("Coordinates update hasn't been implmeneted yet.")
-            # Check the response of https://github.com/e3nn/e3nn/discussions/439
-            # coordinates = coordinates + displacement_tensor  # [bsz, head, seq_len, d]
+            # Update coordinates using the 1o (polar vector) component of
+            # node_features. In the irrep layout "mx1o + mx1e", the first
+            # m*3 entries are 1o vectors. Average them into a single per-atom
+            # displacement. A learned scale (dist_update_scale) keeps the
+            # update magnitude bounded during early training.
+            n_1o = self.irreps_out[0].mul  # number of 1o multiplicities
+            coord_delta = node_features[:, :, :n_1o * 3]       # [B, N, m*3]
+            coord_delta = coord_delta.reshape(bsz, seq_len, n_1o, 3).mean(dim=2)  # [B, N, 3]
+            # Mask out BOS/EOS/padding (inf coords) so their deltas don't
+            # introduce NaN into the distance matrix.
+            inf_mask = torch.isinf(coordinates).any(dim=-1, keepdim=True)  # [B, N, 1]
+            coord_delta = coord_delta.masked_fill(inf_mask, 0.0)
+            coordinates = coordinates + self.dist_update_scale * coord_delta
 
-            # update the attn_mask
-            distance_matrix = get_distance_matrix(coordinates.view(bsz*self.attention_heads, seq_len, d)) # [bsz*head, seq_len, seq_len]
-            delta_distance_matrix = distance_matrix - old_distance_matrix
-            old_distance_matrix = distance_matrix
-            delta_distance_matrix = delta_distance_matrix.view(bsz,-1,seq_len,seq_len).permute(0,2,3,1).contiguous() # [bsz, seq_len, seq_len, head]
-            delta_distance_matrix = self.dist_update_proj(delta_distance_matrix)
-            delta_distance_matrix = delta_distance_matrix.permute(0,3,1,2).contiguous() # [bsz, head, seq_len, seq_len]
-            attn_mask = attn_mask +  delta_distance_matrix.view(-1,seq_len,seq_len)# d exp{(-Ax+b)^2} = -2(Ax+b) exp{(-Ax+b)^2} dx
+            # Recompute distance matrix from updated coordinates and feed
+            # the delta back into attn_mask for the next DiTLayer.
+            distance_matrix = get_distance_matrix(coordinates)  # [B, N, N]
+            delta_distance_matrix = distance_matrix - old_distance_matrix  # [B, N, N]
+            # Project the scalar delta through a learned linear to produce
+            # per-head bias adjustments. Expand [B,N,N] → [B,N,N,H] for the proj.
+            delta_expanded = delta_distance_matrix.unsqueeze(-1).expand(
+                -1, -1, -1, self.attention_heads)  # [B, N, N, H]
+            delta_proj = self.dist_update_proj(delta_expanded)  # [B, N, N, H]
+            delta_proj = delta_proj.permute(0, 3, 1, 2).contiguous()  # [B, H, N, N]
+            attn_mask = attn_mask + delta_proj.reshape(-1, seq_len, seq_len)
         return attn_disp,attn_mask, coordinates, node_features, edge_features
         
 
