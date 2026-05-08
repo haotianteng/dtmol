@@ -733,22 +733,30 @@ class TransformerDecoderWithPair(nn.Module):
         nn.init.normal_(self.t_embedder.mlp[0].weight, std=0.02)
         nn.init.normal_(self.t_embedder.mlp[2].weight, std=0.02)
 
-        ## Zero-out adaLN modulation layers in DiT blocks:
+        ## adaLN modulation layers in DiT blocks:
+        # Standard DiT zero-inits these so modulate(x, 0, 0) = x at init.
+        # That makes the model ignore the time embedding until adaLN weights
+        # grow from gradient — fine when the final output layer IS the terminal
+        # projection (standard DiT), but in OUR architecture the heads run
+        # downstream and need time-dependent features from the start.
+        #
+        # With zero-init adaLN + multi-record training, the gradient signal
+        # for growing adaLN weights is too noisy to converge (each record ×
+        # each t gives a different gradient direction, averaging to ~0).
+        # Result: the model never learns to condition on t, so multi-t
+        # training plateaus while fixed-t overfit works perfectly.
+        #
+        # Fix: use small-normal init (std=0.02, matching t_embedder MLP) so
+        # time conditioning is active from step 1. The initial modulation is
+        # small but nonzero — the model can immediately distinguish different
+        # noise levels and produce t-dependent features.
         for block in self.layers:
-            nn.init.constant_(block.adaLN_modulation[-1].weight, 0)
-            nn.init.constant_(block.adaLN_modulation[-1].bias, 0)
+            nn.init.normal_(block.adaLN_modulation[-1].weight, std=0.02)
+            nn.init.normal_(block.adaLN_modulation[-1].bias, std=0.02)
 
-        ## Zero-out output layers:
-        # NOTE: only adaLN modulation zeroed. The standard DiT trick zero-inits
-        # the *terminal* output projection so pred=0 at init. In our architecture
-        # final_layer.linear is *not* terminal — a multi-layer DiffusionHead/
-        # DiffusionPoolHead runs downstream. Zeroing final_layer.linear pins
-        # decoder_rep=0 at init, which means the head's MLP receives zero input
-        # and most of its weight gradients vanish (only biases update). Keep
-        # adaLN_modulation zero so the modulate(...) operator is identity at
-        # init, but let the linear projection learn from a normal Xavier start.
-        nn.init.constant_(self.final_layer.adaLN_modulation[-1].weight, 0)
-        nn.init.constant_(self.final_layer.adaLN_modulation[-1].bias, 0)
+        ## Output layers — same small-normal init for final_layer's adaLN:
+        nn.init.normal_(self.final_layer.adaLN_modulation[-1].weight, std=0.02)
+        nn.init.normal_(self.final_layer.adaLN_modulation[-1].bias, std=0.02)
 
     def forward(
         self,
