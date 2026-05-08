@@ -733,30 +733,18 @@ class TransformerDecoderWithPair(nn.Module):
         nn.init.normal_(self.t_embedder.mlp[0].weight, std=0.02)
         nn.init.normal_(self.t_embedder.mlp[2].weight, std=0.02)
 
-        ## adaLN modulation layers in DiT blocks:
-        # Standard DiT zero-inits these so modulate(x, 0, 0) = x at init.
-        # That makes the model ignore the time embedding until adaLN weights
-        # grow from gradient — fine when the final output layer IS the terminal
-        # projection (standard DiT), but in OUR architecture the heads run
-        # downstream and need time-dependent features from the start.
-        #
-        # With zero-init adaLN + multi-record training, the gradient signal
-        # for growing adaLN weights is too noisy to converge (each record ×
-        # each t gives a different gradient direction, averaging to ~0).
-        # Result: the model never learns to condition on t, so multi-t
-        # training plateaus while fixed-t overfit works perfectly.
-        #
-        # Fix: use small-normal init (std=0.02, matching t_embedder MLP) so
-        # time conditioning is active from step 1. The initial modulation is
-        # small but nonzero — the model can immediately distinguish different
-        # noise levels and produce t-dependent features.
+        ## Zero-out adaLN modulation layers in DiT blocks:
+        # Standard DiT trick: modulate(x, 0, 0) = x at init. With proper
+        # gradient accumulation (effective bsz=32+), the averaged gradient
+        # gives adaLN weights a clean enough signal to learn time conditioning
+        # naturally — same as standard DiT training at scale.
         for block in self.layers:
-            nn.init.normal_(block.adaLN_modulation[-1].weight, std=0.02)
-            nn.init.normal_(block.adaLN_modulation[-1].bias, std=0.02)
+            nn.init.constant_(block.adaLN_modulation[-1].weight, 0)
+            nn.init.constant_(block.adaLN_modulation[-1].bias, 0)
 
-        ## Output layers — same small-normal init for final_layer's adaLN:
-        nn.init.normal_(self.final_layer.adaLN_modulation[-1].weight, std=0.02)
-        nn.init.normal_(self.final_layer.adaLN_modulation[-1].bias, std=0.02)
+        ## Zero-out output layers' adaLN:
+        nn.init.constant_(self.final_layer.adaLN_modulation[-1].weight, 0)
+        nn.init.constant_(self.final_layer.adaLN_modulation[-1].bias, 0)
 
     def forward(
         self,
