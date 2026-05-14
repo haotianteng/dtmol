@@ -362,7 +362,21 @@ if __name__ == "__main__":
                              "'linear' (plain equivariant), 'scaled' (learned scalar×vector)")
     args = parser.parse_args()
 
-    package_path = "/home/haotiant/Projects/CMU/dtmol/"
+    # --- Multi-GPU / DDP setup via torchrun ---
+    local_rank = int(os.environ.get("LOCAL_RANK", -1))
+    is_distributed = local_rank >= 0
+    if is_distributed:
+        import torch.distributed as dist
+        from torch.nn.parallel import DistributedDataParallel as DDP
+        dist.init_process_group(backend="nccl")
+        torch.cuda.set_device(local_rank)
+        args.device = f"cuda:{local_rank}"
+        if local_rank == 0:
+            print(f"DDP enabled: world_size={dist.get_world_size()}, "
+                  f"effective_batch = {args.batch_size} × {dist.get_world_size()} "
+                  f"× {args.gradient_accumulation_steps}")
+
+    package_path = os.environ.get("DTMOL_ROOT", "/home/haotiant/Projects/CMU/dtmol/")
     date = time.strftime("%Y%m%d")
     model_folder = os.path.join(package_path, f"dtmol/models/bindingpose_{date}")
     DEVICE = args.device
@@ -497,8 +511,29 @@ if __name__ == "__main__":
         )
 
     trainer.load_unimol_pretrain(pretrain_f)
-    optimizer = torch.optim.Adam(trainer.nets['decoder'].parameters(), lr=args.lr)
+
+    # --- DDP wrap ---
+    if is_distributed:
+        for name, net in trainer.nets.items():
+            net.to(DEVICE)
+        # Wrap the full nets dict in a ModuleDict for DDP
+        module_dict = nn.ModuleDict(trainer.nets)
+        module_dict = DDP(module_dict, device_ids=[local_rank],
+                          find_unused_parameters=True)
+        trainer.nets = module_dict
+        trainer.distributed = True
+        if local_rank == 0:
+            print("DDP wrapped all nets")
+
+    optimizer = torch.optim.Adam(
+        trainer.nets.module['decoder'].parameters() if is_distributed
+        else trainer.nets['decoder'].parameters(),
+        lr=args.lr,
+    )
     trainer.train(epoches=args.epochs, optimizer=optimizer, save_folder=model_folder)
+
+    if is_distributed:
+        dist.destroy_process_group()
 
     # Example: multi-dataset training with force loss
     # python dtmol_train_test.py --dataset-mode unified \

@@ -1,0 +1,4 @@
+# Validation split for the synthetic unit-cell dataset.
+unit_cell_synth_val:
+  path: /data/dtMol_Project/datasets/unit_cell_synthesized/valid.lmdb
+  weight: 1.0

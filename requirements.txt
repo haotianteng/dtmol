@@ -1,7 +1,31 @@
-biopandas==0.4.1
-lmdb==1.4.1
-rdkit
-git+https://github.com/dptech-corp/Uni-Core.git
-git+https://github.com/dptech-corp/Uni-Mol.git@7394647#subdirectory=unimol
-toml
+# Core
+torch>=2.1
+torchvision
+torchaudio
 
+# Geometric deep learning
+e3nn>=0.5.1
+torch_geometric>=2.5
+torch_scatter
+torch_sparse
+torch_cluster
+torch_spline_conv
+
+# Data & numerics
+lmdb>=1.4
+numpy>=1.24
+scipy>=1.10
+
+# Chemistry / structure
+biopandas>=0.4
+rdkit
+
+# Training / logging / viz
+wandb>=0.16
+tqdm
+toml
+matplotlib
+
+# UniMol (install separately — requires matching CUDA version)
+# pip install git+https://github.com/dptech-corp/Uni-Core.git
+# pip install "git+https://github.com/dptech-corp/Uni-Mol.git@7394647#subdirectory=unimol"

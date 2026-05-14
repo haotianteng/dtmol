@@ -1,0 +1,7 @@
+# Single-source datamix that trains exclusively on the synthetic
+# unit-cell dataset built by scripts/build_unit_cell_dataset.py.
+# Use this to verify the diffusion model can learn lattice geometry
+# (output should reconstruct unit cells when denoising).
+unit_cell_synth:
+  path: /data/dtMol_Project/datasets/unit_cell_synthesized/train.lmdb
+  weight: 1.0
