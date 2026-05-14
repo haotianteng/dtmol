@@ -29,7 +29,8 @@ class CONFIG(object):
                  lambda_fd_force: float = 0.0,
                  force_loss_fn: str = 'mse',
                  dataset_mode: str = 'legacy',
-                 gradient_accumulation_steps: int = 1):
+                 gradient_accumulation_steps: int = 1,
+                 head_mode: str = 'gated'):
         self.TRAIN = {"project":project,
                       "group":group,
                       "experiment":experiment,
@@ -41,7 +42,8 @@ class CONFIG(object):
                       "lambda_fd_force":lambda_fd_force,
                       "force_loss_fn":force_loss_fn,
                       "dataset_mode":dataset_mode,
-                      "gradient_accumulation_steps":gradient_accumulation_steps}
+                      "gradient_accumulation_steps":gradient_accumulation_steps,
+                      "head_mode":head_mode}
 
 class Trainer(object):
     def __init__(self,

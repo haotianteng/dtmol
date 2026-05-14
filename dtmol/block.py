@@ -917,7 +917,13 @@ class ClassificationHead(nn.Module):
         return x
 
 class DiffusionHead(nn.Module):
-    """Head for simple classification tasks."""
+    """Head for per-atom diffusion score prediction.
+
+    head_mode:
+      'gated':  Sigmoid(MLP(decoder_rep)) * linear3(node_rep)  — original
+      'linear': linear3(node_rep) only                         — DiffDock-style
+      'scaled': Linear(decoder_rep→1) * linear3(node_rep)      — light scalar mod
+    """
 
     def __init__(
         self,
@@ -927,41 +933,58 @@ class DiffusionHead(nn.Module):
         activation_fn,
         hidden_dim=None,
         coord_dim=3,
-        parity = None,
+        parity=None,
+        head_mode="gated",
     ):
         super().__init__()
         hidden_dim = input_dim if not hidden_dim else hidden_dim
         assert out_dim % coord_dim == 0, "Output dimension must be divisible by coord_dim"
         self.out_dim = out_dim
-        self.linear1 = nn.Linear(input_dim, hidden_dim)
-        self.linear2 = nn.Linear(hidden_dim, out_dim)
-        self.x_gate = nn.Sigmoid()
-        self.linear3 = nn.Linear(input_dim2, out_dim//coord_dim, bias = False)
-        # Zero-init the geometric projection so pred = sigmoid(MLP(0)) * 0 = 0
-        # at init. Otherwise the random non-zero y_branch makes initial loss
-        # > baseline, and the optimizer's fastest gradient path is to shrink
-        # y_branch toward 0 (regress to baseline) rather than rotate it
-        # toward target — locking training in a chance-level plateau.
-        nn.init.zeros_(self.linear3.weight)
-        self.activation_fn = get_activation_fn(activation_fn)()
-        self.layer_norm = LayerNorm(hidden_dim)
+        self.head_mode = head_mode
+        self.linear3 = nn.Linear(input_dim2, out_dim//coord_dim, bias=False)
         self.mse_loss = nn.MSELoss(reduction="none")
         self.parity = parity
 
+        if head_mode == "gated":
+            self.linear1 = nn.Linear(input_dim, hidden_dim)
+            self.linear2 = nn.Linear(hidden_dim, out_dim)
+            self.x_gate = nn.Sigmoid()
+            self.activation_fn = get_activation_fn(activation_fn)()
+            self.layer_norm = LayerNorm(hidden_dim)
+            nn.init.zeros_(self.linear3.weight)
+        elif head_mode == "linear":
+            pass  # only linear3 needed
+        elif head_mode == "scaled":
+            self.scale_proj = nn.Linear(input_dim, 1)
+        else:
+            raise ValueError(f"Unknown head_mode: {head_mode}")
+
     def forward(self, x, y):
         """
-        x: the output of the embedding with shape [B, N, D]
-        y: the displacement tensor with shape [B, H, N, 3]
+        x: decoder_rep [B, N, D] (scalar branch, time-conditioned)
+        y: node_rep [B, H, N, 3] (equivariant vector channels)
+
+        head_mode controls how x and y combine:
+          'gated':  Sigmoid(MLP(x)) * linear3(y)  — original architecture
+          'linear': linear3(y) only                — DiffDock-style plain readout
+          'scaled': scale_proj(x) * linear3(y)     — lightweight scalar modulation
         """
-        x = self.linear1(x)
-        x = self.activation_fn(x)
-        x = self.layer_norm(x)
-        x = self.linear2(x) # [B, N, O]
         y = y.transpose(1, 2).transpose(2, 3) # [B, N, 3, H]
         y = self.linear3(y) # [B, N, 3, O/3]
         bsz, n, _, _ = y.size()
-        y = y.reshape(bsz,n,self.out_dim) # [B, N, O]
-        return self.x_gate(x)*y
+        y = y.reshape(bsz, n, self.out_dim) # [B, N, O]
+
+        if self.head_mode == "gated":
+            x = self.linear1(x)
+            x = self.activation_fn(x)
+            x = self.layer_norm(x)
+            x = self.linear2(x) # [B, N, O]
+            return self.x_gate(x) * y
+        elif self.head_mode == "linear":
+            return y
+        elif self.head_mode == "scaled":
+            scale = self.scale_proj(x) # [B, N, 1]
+            return scale * y
 
     def loss(self, output, score, norm, 
              padding_mask = None, 
@@ -995,7 +1018,10 @@ class DiffusionHead(nn.Module):
             raise ValueError("Invalid reduction type")
 
 class DiffusionPoolHead(nn.Module):
-    """Head for system-level diffusion noise."""
+    """Head for system-level diffusion score (mean-pooled over atoms).
+
+    head_mode: same 3 modes as DiffusionHead — 'gated', 'linear', 'scaled'.
+    """
 
     def __init__(
         self,
@@ -1004,42 +1030,58 @@ class DiffusionPoolHead(nn.Module):
         out_dim,
         activation_fn,
         hidden_dim=None,
-        dropout = 0.1,
-        coord_dim = 3,
-        parity = None,
+        dropout=0.1,
+        coord_dim=3,
+        parity=None,
+        head_mode="gated",
     ):
         super().__init__()
         hidden_dim = input_dim if not hidden_dim else hidden_dim
         assert out_dim % coord_dim == 0, "Output dimension must be divisible by coord_dim"
         self.out_dim = out_dim
-        self.linear1 = nn.Linear(input_dim, hidden_dim)
-        self.out_proj = nn.Linear(hidden_dim, out_dim)
-        self.x_gate = nn.SiLU()
-        self.out_proj2 = nn.Linear(input_dim2, out_dim//coord_dim, bias = False)
-        # See DiffusionHead.__init__ for rationale: zero-init y-branch so
-        # pred = SiLU(MLP(0)) * 0 = 0 at init (no regress-to-baseline phase).
-        nn.init.zeros_(self.out_proj2.weight)
-        self.dropout = nn.Dropout(p=dropout)
-        self.activation_fn = get_activation_fn(activation_fn)()
+        self.head_mode = head_mode
+        self.out_proj2 = nn.Linear(input_dim2, out_dim//coord_dim, bias=False)
         self.mse_loss = nn.MSELoss(reduction="none")
         self.parity = parity
 
-    def forward(self, x ,y):
+        if head_mode == "gated":
+            self.linear1 = nn.Linear(input_dim, hidden_dim)
+            self.out_proj = nn.Linear(hidden_dim, out_dim)
+            self.x_gate = nn.SiLU()
+            nn.init.zeros_(self.out_proj2.weight)
+            self.dropout = nn.Dropout(p=dropout)
+            self.activation_fn = get_activation_fn(activation_fn)()
+        elif head_mode == "linear":
+            pass
+        elif head_mode == "scaled":
+            self.scale_proj = nn.Linear(input_dim, 1)
+        else:
+            raise ValueError(f"Unknown head_mode: {head_mode}")
+
+    def forward(self, x, y):
         """
-        x: the output of the embedding with shape [B, N, D]
-        y: the displacement tensor with shape [B, H, N, 3]
+        x: decoder_rep [B, N, D]
+        y: node_rep [B, H, N, 3]
         """
-        bsz, n, d = x.size()
-        x = self.dropout(x)
-        x = self.linear1(x)
-        x = self.activation_fn(x)
-        x = self.dropout(x)
-        x = self.out_proj(x)
-        y = y.permute(0,2,3,1) # [B, N, 3, H]
+        bsz = y.size(0)
+        n = y.size(2)
+        y = y.permute(0, 2, 3, 1) # [B, N, 3, H]
         y = self.out_proj2(y) # [B, N, 3, O/3]
-        y = y.permute(0,1,3,2) # [B, N, O/3, 3]
-        y = y.reshape(bsz,n,self.out_dim) # [B, N, O]
-        out = self.x_gate(x)*y # [B, N, O]
+        y = y.permute(0, 1, 3, 2) # [B, N, O/3, 3]
+        y = y.reshape(bsz, n, self.out_dim) # [B, N, O]
+
+        if self.head_mode == "gated":
+            x = self.dropout(x)
+            x = self.linear1(x)
+            x = self.activation_fn(x)
+            x = self.dropout(x)
+            x = self.out_proj(x)
+            out = self.x_gate(x) * y # [B, N, O]
+        elif self.head_mode == "linear":
+            out = y
+        elif self.head_mode == "scaled":
+            scale = self.scale_proj(x) # [B, N, 1]
+            out = scale * y
         return out.mean(dim=1) # [B, O]
 
     def loss(self, output, score, norm, norm_weighted = False,reduction = "mean"):

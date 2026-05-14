@@ -356,6 +356,10 @@ if __name__ == "__main__":
                         help="Accumulate gradients over this many forward passes "
                              "before calling optimizer.step(). Effective batch "
                              "size = --batch-size × this value. (default: 1)")
+    parser.add_argument("--head-mode", type=str, default="gated",
+                        choices=["gated", "linear", "scaled"],
+                        help="Diffusion head readout: 'gated' (Sigmoid×vector), "
+                             "'linear' (plain equivariant), 'scaled' (learned scalar×vector)")
     args = parser.parse_args()
 
     package_path = "/home/haotiant/Projects/CMU/dtmol/"
@@ -369,7 +373,7 @@ if __name__ == "__main__":
     nets, atom_dict = build_encoder(pretrain_f)
 
     ##% Load the decoder
-    print(f"Loading the decoder with dropout={args.dropout}")
+    print(f"Loading the decoder with dropout={args.dropout}, head_mode={args.head_mode}")
     decoder_config = DummyModelConfig(
         mode="train",
         dropout=args.dropout,
@@ -377,6 +381,7 @@ if __name__ == "__main__":
         attention_dropout=args.dropout,
         activation_dropout=args.dropout,
         head_dropout=args.dropout,
+        head_mode=args.head_mode,
     )
     decoder = Decoder(decoder_config, atom_dict['ligand_dict'])
     decoder.register_diffusion_pool_head("tr-rotation", 6)
@@ -391,6 +396,7 @@ if __name__ == "__main__":
         dataset_mode=args.dataset_mode,
         use_wandb=args.use_wandb,
         gradient_accumulation_steps=args.gradient_accumulation_steps,
+        head_mode=args.head_mode,
     )
 
     if args.dataset_mode == "unified":

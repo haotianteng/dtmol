@@ -28,6 +28,7 @@ def base_architecture(args):
     args.independent_se3_attention = getattr(args, "independent_se3_attention", True)
     args.update_distance_matrix = getattr(args, "update_distance_matrix", True)
     args.use_cross_product_update = getattr(args, "use_cross_product_update", False)
+    args.head_mode = getattr(args, "head_mode", "gated")  # 'gated', 'linear', 'scaled'
 
 class Decoder(nn.Module):
     def __init__(self, config, dictionary) -> None:
@@ -190,11 +191,12 @@ class Decoder(nn.Module):
             se3_dim = sum(self.decoder.parity_out == parity)
         self.diffusion_heads[name] = DiffusionHead(
             input_dim=self.config.embed_dim,
-            input_dim2 = se3_dim, #dimension of output node features of SE3_layer
+            input_dim2=se3_dim,
             hidden_dim=hidden_dim or self.config.embed_dim,
             out_dim=out_dim,
             activation_fn=self.config.head_activate_fn,
-            parity = parity,
+            parity=parity,
+            head_mode=self.config.head_mode,
         )
 
     def register_diffusion_pool_head(
@@ -218,12 +220,13 @@ class Decoder(nn.Module):
             se3_dim = sum(self.decoder.parity_out == parity)
         self.diffusion_heads[name] = DiffusionPoolHead(
             input_dim=self.config.embed_dim,
-            input_dim2 = se3_dim, #dimension of output node features of SE3_layer
+            input_dim2=se3_dim,
             hidden_dim=hidden_dim or self.config.embed_dim,
             out_dim=out_dim,
             activation_fn=self.config.head_activate_fn,
-            dropout = pool_dropout,
-            parity = parity,
+            dropout=pool_dropout,
+            parity=parity,
+            head_mode=self.config.head_mode,
         )
 
 if __name__ == "__main__":

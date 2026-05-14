@@ -152,6 +152,11 @@ def main():
     ap.add_argument("--gradient-accumulation-steps", type=int, default=1,
                     help="Accumulate gradients over N forward passes before "
                          "optimizer.step(). Effective batch = 1 × N.")
+    ap.add_argument("--head-mode", type=str, default="gated",
+                    choices=["gated", "linear", "scaled"],
+                    help="Head readout mode: 'gated' (Sigmoid×vector, original), "
+                         "'linear' (plain equivariant readout, DiffDock-style), "
+                         "'scaled' (learned scalar × vector, lightweight).")
     args = ap.parse_args()
 
     os.makedirs(args.out_dir, exist_ok=True)
@@ -176,8 +181,9 @@ def main():
     enc_cfg = DummyModelConfig(mode="encode")
     le = UniMolEncoder(args=enc_cfg, dictionary=ligand_dict)
     pe = UniMolEncoder(args=enc_cfg, dictionary=protein_dict)
-    dec_cfg = DummyModelConfig(mode="train")
+    dec_cfg = DummyModelConfig(mode="train", head_mode=args.head_mode)
     dec = Decoder(dec_cfg, ligand_dict)
+    print(f"[model] head_mode={args.head_mode}", flush=True)
     dec.register_diffusion_pool_head("tr-rotation", 6)
     dec.register_diffusion_head("perturbation", 3)
     nets = {"ligand_encoder": le, "protein_encoder": pe, "decoder": dec}
