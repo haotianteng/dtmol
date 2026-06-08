@@ -17,6 +17,13 @@ wandb/
 # model files
 models/
 
+# checkpoints & pretrained weights — too large for git, upload to S3 instead
+*.pt
+*.ckpt
+dtmol/pretrain_models/*.pt
+ralph/test_results/**/ckpt*.pt
+ralph/test_results/**/*.lmdb/
+
 # log
 .vscode/
 Interactive*
